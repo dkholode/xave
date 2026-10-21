@@ -23,11 +23,13 @@ untrusted:
 - The online browser loads HTTPS pages only, and blocks mixed content, file
   access, and third-party cookies.
 - Saved reading opens with JavaScript disabled, network loads blocked, and a
-  Content Security Policy that permits only inline styles and embedded images.
+  Content Security Policy that permits only inline styles and the article's
+  own stored images.
 - Captured text is escaped, and only `http`/`https` links without embedded
   credentials are kept.
-- Images are downloaded without following redirects, so site cookies are never
-  sent to another host. Cookies are never saved in articles or exports.
+- Images are downloaded without following redirects, and site cookies are sent
+  only to images on the captured page's own host. Cookies are never saved in
+  articles or exports.
 - The library and browser sessions are stored in the app's private storage and
   are excluded from Android backups.
 

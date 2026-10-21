@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -20,7 +21,9 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -36,6 +39,7 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -50,8 +54,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -69,12 +78,17 @@ public class MainActivity extends Activity {
     private String sourceUrl;
     private TextView readingProgress;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    // Image downloads run apart from io so they never delay opening, saving, or exporting articles.
+    private final ExecutorService captures = Executors.newSingleThreadExecutor();
+    private boolean pageFailed;
+    private boolean foreground;
+    // Orphaned images come only from a process that died mid-capture, so one check per process is enough.
+    private static boolean orphansChecked;
     private volatile int generation;
     private boolean busy;
     private int zoom;
     private String pendingExportFile;
     private boolean dark;
-    private boolean pageError;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable poll = this::pollStatus;
     private final Set<File> selected = new HashSet<>();
@@ -87,8 +101,13 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         zoom = getPreferences(0).getInt("zoom", 100);
         try (InputStream in = getAssets().open("capture.js")) {
-            collector = new String(readLimited(in, 200000), StandardCharsets.UTF_8);
+            collector = new String(readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
         } catch (Exception e) { error("Cannot load capture tools."); return; }
+        if (!orphansChecked) {
+            orphansChecked = true;
+            // Queued ahead of this screen's captures, and later screens never sweep, so no capture in flight is touched.
+            captures.execute(() -> { try { DocumentFiles.removeOrphanImages(getFilesDir()); } catch (Exception ignored) { } });
+        }
         showLibrary();
         if (state == null) handleIntent(getIntent());
         else {
@@ -227,6 +246,7 @@ public class MainActivity extends Activity {
     }
 
     private void showLibrary() {
+        destroySource();
         layout("library"); document = null; currentFile = null; currentDraft = null;
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
@@ -470,8 +490,9 @@ public class MainActivity extends Activity {
         top.addView(pill("Capture", true, this::capture));
         TextView tip = label("Scroll the thread and expand long posts first.", 14);
         tip.setTextColor(muted()); screen.addView(tip);
-        pageError = false;
         browser = resumed == null ? new WebView(this) : resumed;
+        if (foreground) browser.resumeTimers();
+        pageFailed = false;
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
@@ -487,21 +508,23 @@ public class MainActivity extends Activity {
                 }
                 return false;
             }
-            @Override public void onPageStarted(WebView view, String loading, android.graphics.Bitmap icon) {
-                if (!"online".equals(mode) || view != browser) return;
-                pageError = false;
-                status.setText("Loading…");
+            @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                if (view != browser) return;
+                pageFailed = false;
+                if ("online".equals(mode)) status.setText("Loading…");
             }
             @Override public void onPageFinished(WebView view, String loaded) {
-                if (!"online".equals(mode) || view != browser) return;
+                // A failed load still finishes, so keep its error message instead of polling for posts.
+                if (!"online".equals(mode) || view != browser || pageFailed) return;
                 view.evaluateJavascript(collector, null);
                 CookieManager.getInstance().flush();
                 pollStatus();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError e) {
-                if (!request.isForMainFrame()) return;
-                pageError = true;
-                status.setText("Page could not load. Check Wi-Fi and the link.");
+                if (request.isForMainFrame()) { pageFailed = true; status.setText("Page could not load. Check Wi-Fi and the link."); }
+            }
+            @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                return renderGone(view);
             }
         });
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -518,8 +541,8 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(poll);
         if (!"online".equals(mode) || browser == null) return;
         WebView page = browser;
-        if (!busy && !pageError) page.evaluateJavascript("window.__xaveCollector ? window.__xaveCollector.summary() : null", result -> {
-            if (page != browser || busy || pageError) return;
+        if (!busy && !pageFailed) page.evaluateJavascript("window.__xaveCollector ? window.__xaveCollector.summary() : null", result -> {
+            if (page != browser || busy || pageFailed) return;
             try {
                 JSONObject found = new JSONObject(result);
                 int posts = found.getInt("posts");
@@ -546,23 +569,29 @@ public class MainActivity extends Activity {
                 doc.put("schemaVersion", 2);
                 doc.put("savedAt", DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date()));
                 JSONArray blocks = doc.getJSONArray("blocks");
-                // Snapshot only relevant image cookies on the UI thread. Never export them.
+                // Snapshot cookies on the UI thread, only for images on the page's own host. Never export them.
+                String source = doc.optString("source");
                 ArrayList<String> cookies = new ArrayList<>();
                 for (int i=0; i<blocks.length(); i++) {
                     JSONObject b = blocks.getJSONObject(i);
-                    cookies.add("image".equals(b.optString("kind")) ? CookieManager.getInstance().getCookie(b.optString("url")) : null);
+                    cookies.add("image".equals(b.optString("kind")) && ReaderDocument.sameHost(source, b.optString("url"))
+                        ? CookieManager.getInstance().getCookie(b.optString("url")) : null);
                 }
                 String userAgent = browser.getSettings().getUserAgentString();
                 status.setText("Downloading images for offline reading…");
-                io.execute(() -> {
-                    embedImages(doc, cookies, userAgent, token);
-                    if (token != generation) return;
+                captures.execute(() -> {
+                    File draft = new File(drafts(), UUID.randomUUID() + ".json");
+                    embedImages(doc, cookies, userAgent, token, DocumentFiles.images(draft));
+                    if (token != generation) {
+                        try { DocumentFiles.delete(draft); } catch (Exception ignored) { }
+                        return;
+                    }
                     try {
-                        File draft = new File(drafts(), UUID.randomUUID() + ".json");
                         writeAtomic(draft, doc.toString());
                         try { writeSummary(draft, doc); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, null, draft); });
                     } catch (Exception e) {
+                        try { DocumentFiles.delete(draft); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation) {
                             busy = false; error("Could not keep this capture. Check available storage and retry.");
                         } });
@@ -572,38 +601,89 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void embedImages(JSONObject doc, ArrayList<String> cookies, String userAgent, int token) {
-        int missing = 0, count = 0, total = 0;
-        long deadline = android.os.SystemClock.elapsedRealtime() + 45000;
+    /** Saves each image in the article's images folder; image blocks then refer to it by file name. */
+    private void embedImages(JSONObject doc, ArrayList<String> cookies, String userAgent, int token, File images) {
         JSONArray blocks = doc.optJSONArray("blocks");
-        for (int i=0; i<blocks.length(); i++) {
-            if (token != generation) return;
-            JSONObject block = blocks.optJSONObject(i);
-            if (!"image".equals(block.optString("kind"))) continue;
-            HttpURLConnection connection = null;
+        ArrayList<Integer> pictures = new ArrayList<>();
+        for (int i=0; i<blocks.length(); i++) if ("image".equals(blocks.optJSONObject(i).optString("kind"))) pictures.add(i);
+        int count = Math.min(40, pictures.size());
+        int missing = pictures.size() - count;
+        long deadline = android.os.SystemClock.elapsedRealtime() + 45000;
+        AtomicLong total = new AtomicLong();
+        AtomicInteger done = new AtomicInteger();
+        ArrayList<Callable<String>> downloads = new ArrayList<>();
+        if (count > 0) images.mkdirs();
+        for (int n=0; n<count; n++) {
+            int index = n;
+            JSONObject block = blocks.optJSONObject(pictures.get(n));
+            String cookie = cookies.get(pictures.get(n));
+            downloads.add(() -> {
+                try { return token == generation ? download(block.optString("url"), cookie, userAgent, new File(images, String.valueOf(index)), total, deadline) : null; }
+                catch (Exception e) { return null; }
+                finally {
+                    int finished = done.incrementAndGet();
+                    runOnUiThread(() -> { if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count); });
+                }
+            });
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(3);
+        try {
+            List<Future<String>> results = pool.invokeAll(downloads, 45, TimeUnit.SECONDS);
+            for (int n=0; n<count; n++) {
+                try {
+                    String name = results.get(n).get();
+                    if (name == null) missing++;
+                    else blocks.getJSONObject(pictures.get(n)).put("file", name);
+                } catch (Exception e) { missing++; }
+            }
+        } catch (InterruptedException e) { missing += count; }
+        finally { pool.shutdownNow(); }
+        // An inline image is now a file or a placeholder, so its payload need not stay in the article.
+        for (int i : pictures) if (blocks.optJSONObject(i).optString("url").startsWith("data:")) blocks.optJSONObject(i).remove("url");
+        if (missing > 0) try { doc.put("warning", doc.optString("warning") + " " + missing + " image(s) could not be saved; placeholders appear below."); } catch (Exception ignored) { }
+    }
+
+    /** Returns the saved file name, which is the given base name plus the image type's extension. */
+    private static String download(String link, String cookie, String userAgent, File base, AtomicLong total, long deadline) throws Exception {
+        String type;
+        byte[] bytes;
+        Matcher inline = Pattern.compile("data:(image/[a-z]+);base64,([A-Za-z0-9+/=]+)").matcher(link);
+        if (inline.matches()) {
+            type = inline.group(1);
+            bytes = java.util.Base64.getDecoder().decode(inline.group(2));
+            if (bytes.length > 4 * 1024 * 1024) throw new Exception("Resource exceeds size limit");
+        } else {
+            if (!ReaderDocument.webUrl(link) || !link.startsWith("https://")) throw new Exception("Unsupported image URL");
+            HttpURLConnection connection = (HttpURLConnection)new URL(link).openConnection();
             try {
-                if (++count > 40 || total >= 16 * 1024 * 1024 || android.os.SystemClock.elapsedRealtime() > deadline) throw new Exception("Image limit");
-                String link = block.optString("url");
-                if (!ReaderDocument.webUrl(link) || !link.startsWith("https://")) throw new Exception("Unsupported image URL");
-                connection = (HttpURLConnection)new URL(link).openConnection();
                 connection.setConnectTimeout(7000); connection.setReadTimeout(7000);
                 // Redirects fail visibly rather than forwarding site cookies to another host.
                 connection.setInstanceFollowRedirects(false);
                 connection.setRequestProperty("User-Agent", userAgent);
-                if (cookies.get(i) != null) connection.setRequestProperty("Cookie", cookies.get(i));
+                if (cookie != null) connection.setRequestProperty("Cookie", cookie);
                 if (connection.getResponseCode() != 200) throw new Exception("Image HTTP error");
-                String type = connection.getContentType();
-                type = type == null ? "" : type.split(";")[0].trim().toLowerCase(java.util.Locale.ROOT);
-                if (!type.matches("image/(png|jpeg|gif|webp)")) throw new Exception("Unsupported image format");
-                try (InputStream in = connection.getInputStream()) {
-                    byte[] bytes = readLimited(in, Math.min(4 * 1024 * 1024, 16 * 1024 * 1024 - total));
-                    total += bytes.length;
-                    block.put("data", "data:" + type + ";base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP));
-                }
-            } catch (Exception e) { missing++; }
-            finally { if (connection != null) connection.disconnect(); }
+                type = connection.getContentType();
+                if (ReaderDocument.imageExtension(type) == null) throw new Exception("Unsupported image format");
+                try (InputStream in = connection.getInputStream()) { bytes = readLimited(in, 4 * 1024 * 1024, deadline); }
+            } finally { connection.disconnect(); }
         }
-        if (missing > 0) try { doc.put("warning", doc.optString("warning") + " " + missing + " image(s) could not be saved; placeholders appear below."); } catch (Exception ignored) { }
+        String extension = ReaderDocument.imageExtension(type);
+        if (extension == null) throw new Exception("Unsupported image format");
+        if (total.addAndGet(bytes.length) > 16 * 1024 * 1024) throw new Exception("Image limit");
+        File file = new File(base + "." + extension);
+        Files.write(file.toPath(), bytes);
+        return file.getName();
+    }
+
+    /** Without this, a crashed or memory-killed page renderer would take the whole app down with it. */
+    private boolean renderGone(WebView view) {
+        if (view == sourceBrowser) { destroySource(); return true; }
+        if (view != browser) return true;
+        ((android.view.ViewGroup)browser.getParent()).removeView(browser);
+        browser.destroy(); browser = null;
+        showLibrary();
+        error("The page stopped unexpectedly, often because the device ran low on memory. Open it again from the library or the link.");
+        return true;
     }
 
     private void destroySource() {
@@ -613,9 +693,13 @@ public class MainActivity extends Activity {
 
     private void showReader(JSONObject doc, File file, File draft) {
         if (draft != null && "online".equals(mode) && browser != null) {
-            destroySource(); sourceBrowser = browser; sourceUrl = doc.optString("source");
-            ((android.view.ViewGroup)browser.getParent()).removeView(browser);
-            sourceBrowser.onPause(); browser = null;
+            destroySource();
+            // A page that navigated while images downloaded no longer shows this capture's source.
+            if (doc.optString("source").equals(browser.getUrl())) {
+                sourceBrowser = browser; sourceUrl = doc.optString("source");
+                ((android.view.ViewGroup)browser.getParent()).removeView(browser);
+                sourceBrowser.onPause(); browser = null;
+            }
         }
         layout("reader"); document = doc; currentFile = file; currentDraft = draft;
         LinearLayout top = bar();
@@ -628,12 +712,27 @@ public class MainActivity extends Activity {
         top.addView(icon("⋮", this::readerOptions));
         divider(screen);
         browser = new WebView(this);
+        // Timers are global; a capture finishing in the background must not restart page scripts.
+        if (foreground) browser.resumeTimers();
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(false); s.setAllowFileAccess(false); s.setAllowContentAccess(false);
         s.setBlockNetworkLoads(true); s.setTextZoom(zoom);
         File positionFile = file == null ? draft : file;
+        File images = DocumentFiles.images(positionFile);
         browser.setWebViewClient(new WebViewClient() {
+            // Network loads stay blocked; the article's own images are served from app storage.
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri link = request.getUrl();
+                String name = link.getLastPathSegment();
+                if (!"offline.xave.invalid".equals(link.getHost()) || !("/images/" + name).equals(link.getPath())
+                        || !ReaderDocument.imageFile(name)) return null;
+                try { return new WebResourceResponse(ReaderDocument.imageType(name), null, new FileInputStream(new File(images, name))); }
+                catch (Exception e) { return null; }
+            }
+            @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                return renderGone(view);
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String link = request.getUrl().toString();
                 if (ReaderDocument.webUrl(link)) new AlertDialog.Builder(MainActivity.this)
@@ -663,7 +762,7 @@ public class MainActivity extends Activity {
         readingProgress.setGravity(Gravity.CENTER);
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
         footer.addView(pill("Next", false, () -> browser.pageDown(false)));
-        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, file == null), "text/html", "UTF-8", null);
+        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, file == null, name -> "images/" + name), "text/html", "UTF-8", null);
     }
 
     private void updateReadingProgress() {
@@ -744,6 +843,7 @@ public class MainActivity extends Activity {
             try {
                 File file = DocumentFiles.save(draft, library(), doc);
                 runOnUiThread(() -> { if (token == generation && !isFinishing()) {
+                    destroySource();
                     showReader(doc, file, null);
                     Toast.makeText(this,"Saved for offline reading",Toast.LENGTH_LONG).show();
                 } });
@@ -757,6 +857,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Export saved reading")
             .setItems(new String[]{"Self-contained HTML file", "Print / Save as PDF"}, (dialog,which) -> {
                 if (which == 1) {
+                    if (browser.getProgress() < 100) { error("The article is still loading. Try again in a moment."); return; }
                     try {
                         ((PrintManager)getSystemService(PRINT_SERVICE)).print("Xave", browser.createPrintDocumentAdapter("Xave"), null);
                     } catch (Exception e) { error("Printing is unavailable on this device. Export an HTML file instead."); }
@@ -784,10 +885,15 @@ public class MainActivity extends Activity {
             Uri target = data.getData();
             io.execute(() -> {
                 try {
-                    JSONObject doc = new JSONObject(new String(Files.readAllBytes(new File(library(), filename).toPath()), StandardCharsets.UTF_8));
+                    File saved = new File(library(), filename);
+                    JSONObject doc = new JSONObject(new String(Files.readAllBytes(saved.toPath()), StandardCharsets.UTF_8));
+                    File images = DocumentFiles.images(saved);
+                    String html = ReaderDocument.html(doc, name -> {
+                        try { return DocumentFiles.dataUrl(new File(images, name)); } catch (Exception e) { return null; }
+                    });
                     try (OutputStream out = getContentResolver().openOutputStream(target)) {
                         if (out == null) throw new Exception("File picker returned no output stream");
-                        out.write(ReaderDocument.html(doc).getBytes(StandardCharsets.UTF_8));
+                        out.write(html.getBytes(StandardCharsets.UTF_8));
                     }
                     runOnUiThread(() -> Toast.makeText(this, "Exported", Toast.LENGTH_SHORT).show());
                 } catch (Exception e) { runOnUiThread(() -> error("Could not export the file.")); }
@@ -807,9 +913,20 @@ public class MainActivity extends Activity {
         getPreferences(0).edit().putFloat("position:" + positionFile.getName(), ratio).apply();
     }
 
-    @Override protected void onPause() { rememberPosition(); super.onPause(); }
+    @Override protected void onPause() {
+        foreground = false;
+        rememberPosition();
+        // WebView.onPause stops media but not page scripts; pauseTimers stops JavaScript in every WebView.
+        if (browser != null) { browser.onPause(); browser.pauseTimers(); }
+        super.onPause();
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        foreground = true;
+        if (browser != null) { browser.resumeTimers(); browser.onResume(); }
+    }
     @Override public void onBackPressed() {
-        if ("reader".equals(mode) && currentDraft != null) openOnline(document.optString("source"));
+        if ("reader".equals(mode) && currentDraft != null && sourceBrowser != null) openOnline(document.optString("source"));
         else if ("online".equals(mode) && browser != null && browser.canGoBack()) browser.goBack();
         else if (!"library".equals(mode)) showLibrary();
         else super.onBackPressed();
@@ -820,16 +937,23 @@ public class MainActivity extends Activity {
         if (browser != null) browser.destroy();
         destroySource();
         io.shutdown();
+        captures.shutdown();
         super.onDestroy();
     }
-    private void error(String message) { new AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show(); }
+    private void error(String message) {
+        // Background work can finish after this screen is gone, and a dialog then would crash.
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show();
+    }
 
-    static byte[] readLimited(InputStream in, int limit) throws Exception {
+    /** The deadline bounds a server that trickles bytes, which the per-read timeout alone does not. */
+    static byte[] readLimited(InputStream in, int limit, long deadline) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
         int n;
         while ((n = in.read(buffer)) != -1) {
             if (out.size() + n > limit) throw new Exception("Resource exceeds size limit");
+            if (Thread.interrupted() || android.os.SystemClock.elapsedRealtime() > deadline) throw new Exception("Download stopped");
             out.write(buffer, 0, n);
         }
         return out.toByteArray();
