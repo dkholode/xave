@@ -24,6 +24,23 @@ android {
                 keyPassword 'android'
             }
         }
+        // Release builds are signed only when these are set (see RELEASING.md).
+        // Without them the release APK is unsigned, which is what F-Droid expects.
+        release {
+            def releaseKey = System.getenv('XAVE_RELEASE_KEYSTORE')
+            if (releaseKey) {
+                storeFile file(releaseKey)
+                storePassword System.getenv('XAVE_RELEASE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('XAVE_RELEASE_KEY_ALIAS')
+                keyPassword System.getenv('XAVE_RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (System.getenv('XAVE_RELEASE_KEYSTORE')) signingConfig signingConfigs.release
+        }
     }
 
     compileOptions {

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and lint
+        run: ./gradlew assembleDebug lintDebug
+
+      - name: Renderer and storage tests
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
+          XAVE_JSON_JAR="$RUNNER_TEMP/json.jar" python3 tests/run_host_tests.py
+
+      - name: Capture tests
+        run: |
+          python3 tests/build_test_page.py
+          google-chrome --headless=new --disable-gpu --dump-dom "file://$PWD/app/build/capture-tests.html" > "$RUNNER_TEMP/capture.html"
+          sed -n '/<pre id="results">/,/<\/pre>/p' "$RUNNER_TEMP/capture.html"
+          title=$(grep -o '<title>[^<]*</title>' "$RUNNER_TEMP/capture.html")
+          echo "$title"
+          case "$title" in *passed*) ;; *) exit 1 ;; esac
+          case "$title" in *FAILED*) exit 1 ;; esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xave-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
