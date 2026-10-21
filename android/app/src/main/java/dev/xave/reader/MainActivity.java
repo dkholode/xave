@@ -413,7 +413,7 @@ public class MainActivity extends Activity {
         AtomicLong total = new AtomicLong();
         AtomicInteger done = new AtomicInteger();
         ArrayList<Callable<String>> downloads = new ArrayList<>();
-        images.mkdirs();
+        if (count > 0) images.mkdirs();
         for (int n=0; n<count; n++) {
             int index = n;
             JSONObject block = blocks.optJSONObject(pictures.get(n));
