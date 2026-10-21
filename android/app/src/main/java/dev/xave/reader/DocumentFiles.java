@@ -53,11 +53,19 @@ final class DocumentFiles {
         Files.deleteIfExists(article.toPath());
         Files.deleteIfExists(new File(article + ".meta").toPath());
         Files.deleteIfExists(new File(article + ".title-backup").toPath());
-        File root = article.getParentFile().getParentFile();
+        removeUnusedImages(article.getParentFile().getParentFile(), article.getName());
+    }
+
+    /** A capture interrupted before its draft was written leaves images that no article can reach. */
+    static void removeOrphanImages(File root) throws Exception {
+        File[] folders = new File(root, "images").listFiles();
+        if (folders != null) for (File folder : folders) removeUnusedImages(root, folder.getName() + ".json");
+    }
+
+    private static void removeUnusedImages(File root, String name) throws Exception {
         // A draft left behind by an interrupted save still shares its images with the saved article.
-        if (new File(new File(root, "drafts"), article.getName()).exists()
-            || new File(new File(root, "library"), article.getName()).exists()) return;
-        File images = images(article);
+        if (new File(new File(root, "drafts"), name).exists() || new File(new File(root, "library"), name).exists()) return;
+        File images = images(new File(new File(root, "drafts"), name));
         File[] files = images.listFiles();
         if (files != null) for (File image : files) Files.deleteIfExists(image.toPath());
         Files.deleteIfExists(images.toPath());

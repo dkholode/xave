@@ -135,12 +135,20 @@ public final class ReaderHostTest {
             check(!pictureSaved.exists() && !new File(pictureSaved + ".meta").exists() && !kept.exists()
                 && !DocumentFiles.images(pictureSaved).exists(), "Deleting an article left its files behind");
             pass("Images follow a draft into the library, embed in exports, and leave with the last copy");
+
+            File live = new File(drafts, "live.json"); DocumentFiles.writeAtomic(live, doc.toString());
+            File liveImage = new File(DocumentFiles.images(live), "0.png");
+            File lostImage = new File(DocumentFiles.images(new File(drafts, "interrupted.json")), "0.png");
+            for (File image : new File[]{liveImage, lostImage}) { image.getParentFile().mkdirs(); Files.write(image.toPath(), new byte[]{1}); }
+            DocumentFiles.removeOrphanImages(root.toFile());
+            check(liveImage.isFile() && !lostImage.getParentFile().exists(), "Wrong images removed after an interrupted capture");
+            pass("Images left by an interrupted capture are removed while a draft's images stay");
         } finally {
             try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
                 for (Path path : (Iterable<Path>)paths.sorted(java.util.Comparator.reverseOrder())::iterator) Files.delete(path);
             }
         }
         Files.write(new File(args[0]).toPath(), html.getBytes(StandardCharsets.UTF_8));
-        System.out.println(passed + "/13 host checks passed");
+        System.out.println(passed + "/14 host checks passed");
     }
 }

@@ -68,6 +68,7 @@ public class MainActivity extends Activity {
     // Image downloads run apart from io so they never delay opening, saving, or exporting articles.
     private final ExecutorService captures = Executors.newSingleThreadExecutor();
     private boolean pageFailed;
+    private boolean foreground;
     private volatile int generation;
     private boolean busy;
     private int zoom;
@@ -85,6 +86,7 @@ public class MainActivity extends Activity {
         try (InputStream in = getAssets().open("capture.js")) {
             collector = new String(readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
         } catch (Exception e) { error("Cannot load capture tools."); return; }
+        io.execute(() -> { try { DocumentFiles.removeOrphanImages(getFilesDir()); } catch (Exception ignored) { } });
         showLibrary();
         if (state == null) handleIntent(getIntent());
         else {
@@ -312,7 +314,7 @@ public class MainActivity extends Activity {
         status = label("Loading…", 15); screen.addView(status);
         tip = label(tipFor(Uri.parse(url).getHost()), 15); screen.addView(tip);
         browser = resumed == null ? new WebView(this) : resumed;
-        browser.resumeTimers();
+        if (foreground) browser.resumeTimers();
         pageFailed = false;
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
@@ -393,6 +395,7 @@ public class MainActivity extends Activity {
                         try { writeSummary(draft, doc); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, null, draft); });
                     } catch (Exception e) {
+                        try { DocumentFiles.delete(draft); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation) {
                             busy = false; status.setText("Could not keep this capture. Check available storage and retry.");
                         } });
@@ -439,6 +442,8 @@ public class MainActivity extends Activity {
             }
         } catch (InterruptedException e) { missing += count; }
         finally { pool.shutdownNow(); }
+        // An inline image is now a file or a placeholder, so its payload need not stay in the article.
+        for (int i : pictures) if (blocks.optJSONObject(i).optString("url").startsWith("data:")) blocks.optJSONObject(i).remove("url");
         if (missing > 0) try { doc.put("warning", doc.optString("warning") + " " + missing + " image(s) could not be saved; placeholders appear below."); } catch (Exception ignored) { }
     }
 
@@ -506,7 +511,8 @@ public class MainActivity extends Activity {
         add(top, button(file == null ? "Save offline" : "Export", file == null ? this::saveDocument : this::exportDocument));
         add(top, button("More", this::readerOptions));
         browser = new WebView(this);
-        browser.resumeTimers();
+        // Timers are global; a capture finishing in the background must not restart page scripts.
+        if (foreground) browser.resumeTimers();
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(false); s.setAllowFileAccess(false); s.setAllowContentAccess(false);
@@ -710,6 +716,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        foreground = false;
         rememberPosition();
         // WebView.onPause stops media but not page scripts; pauseTimers stops JavaScript in every WebView.
         if (browser != null) { browser.onPause(); browser.pauseTimers(); }
@@ -717,6 +724,7 @@ public class MainActivity extends Activity {
     }
     @Override protected void onResume() {
         super.onResume();
+        foreground = true;
         if (browser != null) { browser.resumeTimers(); browser.onResume(); }
     }
     @Override public void onBackPressed() {
