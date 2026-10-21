@@ -10,7 +10,7 @@ function fixture(html, url = 'https://example.org/post') {
   const location = new URL(url);
   const install = () => new Function('window', 'document', 'location', 'getComputedStyle', 'Node', 'setInterval', 'clearInterval', window.captureSource)(win, doc, location, win.getComputedStyle.bind(win), win.Node, () => 1, () => {});
   install();
-  return {doc, location, install, capture: () => JSON.parse(win.__xaveCollector.capture()), close: () => frame.remove()};
+  return {doc, location, install, capture: () => JSON.parse(win.__xaveCollector.capture()), summary: () => win.__xaveCollector.summary(), close: () => frame.remove()};
 }
 function test(name, fn) {
   try { fn(); results.push('PASS · ' + name); }
@@ -51,6 +51,14 @@ test('X retains exact snowflake IDs and excludes replies by other authors', () =
   const texts = doc.blocks.filter(b => b.kind === 'text').map(b => b.text);
   assert(texts.join('|') === 'First post|Second post', 'Wrong author or precision/order loss');
   assert(doc.warning.startsWith('Partial capture:'), 'Missing partial-capture warning'); f.close();
+});
+test('Loading status reports X Articles, loaded posts, and pages that are not posts', () => {
+  const thread = fixture(post('alice', root, 'First post') + post('alice', reply, 'Second post') + post('bob', '20000000000000000003', 'Reply'), `https://x.com/alice/status/${root}`);
+  assert(JSON.stringify(thread.summary()) === '{"article":false,"status":true,"posts":2}', 'Wrong thread status: ' + JSON.stringify(thread.summary())); thread.close();
+  const article = fixture(`<article data-testid="twitterArticleReadView"><p>${paragraph}</p></article>`, `https://x.com/alice/status/${root}`);
+  assert(article.summary().article === true, 'Did not recognize an X Article'); article.close();
+  const profile = fixture(post('alice', root, 'Pinned post'), 'https://x.com/alice');
+  assert(JSON.stringify(profile.summary()) === '{"article":false,"status":false,"posts":0}', 'Treated a profile as a post'); profile.close();
 });
 test('X refuses capture when the linked post has not loaded', () => {
   const f = fixture(post('alice', reply, 'Only a reply'), `https://x.com/alice/status/${root}`);

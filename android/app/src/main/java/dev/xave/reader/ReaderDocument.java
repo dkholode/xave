@@ -1,10 +1,25 @@
 package dev.xave.reader;
 
 import java.net.URI;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.format.FormatStyle;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 final class ReaderDocument {
+    // capture.js titles every thread capture this way, so it identifies threads in old and new saves alike.
+    private static final Pattern THREAD_TITLE = Pattern.compile("@([A-Za-z0-9_]{1,15}) · (\\d+) posts?");
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\[(.+)\\]", Pattern.DOTALL);
+    private static final Pattern MISSING_IMAGES = Pattern.compile("(\\d+) image\\(s\\) could not be saved");
+
     static boolean genericTitle(String title) {
         return title == null || title.trim().isEmpty() || title.trim().matches("(?i)(conversation|post|article|home|x|twitter)(\\s*[/|]\\s*(x|twitter))?");
     }
@@ -44,6 +59,51 @@ final class ReaderDocument {
             }
 
             return title.isEmpty() ? "Saved article" : title;
+        }
+    }
+
+    /** Library row text: the first post of a thread, or the title of an X Article. */
+    static JSONObject summary(JSONObject document) throws JSONException {
+        Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
+        if (thread.matches()) {
+            return new JSONObject().put("title", firstPost(document)).put("detail", thread.group());
+        }
+        String handle = handle(document.optString("source"));
+        return new JSONObject().put("title", savedTitle(document)).put("detail", handle.isEmpty() ? "Article" : "@" + handle + " · Article");
+    }
+
+    private static String firstPost(JSONObject document) {
+        JSONArray blocks = document.optJSONArray("blocks");
+        for (int i = 0; blocks != null && i < blocks.length(); ++i) {
+            JSONObject block = blocks.optJSONObject(i);
+            if (block == null || !"text".equals(block.optString("kind"))) continue;
+            String text = block.optString("text").replaceAll("\\s+", " ").trim();
+            if (!text.isEmpty() && !PLACEHOLDER.matcher(text).matches()) {
+                return text.length() > 160 ? text.substring(0, 157) + "…" : text;
+            }
+        }
+        return document.optString("title");
+    }
+
+    /** The account in an x.com/handle/status/... link, or empty for share links and other sites. */
+    private static String handle(String source) {
+        try {
+            URI uri = new URI(source);
+            String[] path = uri.getPath().split("/");
+            if (xHost(uri.getHost()) && path.length > 1 && path[1].matches("[A-Za-z0-9_]{1,15}") && !path[1].equals("i")) {
+                return path[1];
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    /** X gives ISO times on signed-in pages and display text on anonymous ones; only the former needs formatting. */
+    private static String postDate(String text) {
+        try {
+            return DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).format(Instant.parse(text).atZone(ZoneId.systemDefault()));
+        } catch (DateTimeParseException ignored) {
+            return text;
         }
     }
 
@@ -95,85 +155,132 @@ final class ReaderDocument {
         }
     }
 
+    /** Exported HTML files show the save date and source on screen. */
     static String html(JSONObject document) {
-        return html(document, false);
+        return html(document, false, false, true);
     }
 
     /** Dark colors apply on screen only, so printing and PDF export stay black on white. */
-    static String html(JSONObject document, boolean dark) {
-        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\"><title>" + escape(document.optString("title")) + "</title><style>body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}h1{font-size:1.25em;line-height:1.25;margin:0 0 12px}h2{font-size:1.15em}h3,h4,h5,h6{font-size:1.05em}p{white-space:pre-wrap;margin:.8em 0}h2,h3,h4,h5,h6{break-after:avoid}img{max-width:100%;height:auto}pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}header,details,figcaption{font:15px/1.5 sans-serif}details{margin:8px 0}summary{padding:6px 0;cursor:pointer}.warning{border-left:3px solid;padding-left:10px}.list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}a{color:#000;text-decoration:underline}hr{border:0;border-top:1px solid #000;margin:24px 0}figure{margin:16px 0}.print-info{display:none}@media print{details{display:none}.print-info{display:block;font:11px/1.4 sans-serif}}" + (dark ? "@media screen{body{color:#eee;background:#000}a{color:#eee}hr{border-top-color:#eee}}" : "") + "</style></head><body><h1>" + escape(document.optString("title")) + "</h1>");
-        String source = document.optString("source");
-        String host = "Article";
+    static String html(JSONObject document, boolean dark, boolean preview) {
+        return html(document, dark, preview, false);
+    }
 
+    private static String html(JSONObject document, boolean dark, boolean preview, boolean export) {
+        String title = document.optString("title");
+        Matcher thread = THREAD_TITLE.matcher(title);
+        boolean isThread = thread.matches();
+        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\"><title>" + escape(title) + "</title><style>body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}h1{font-size:1.25em;line-height:1.25;margin:0 0 6px}h2{font-size:1.15em}h3,h4,h5,h6{font-size:1.05em}p{white-space:pre-wrap;margin:.8em 0}h2,h3,h4,h5,h6{break-after:avoid}img{max-width:100%;height:auto}pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}figcaption{font:15px/1.5 sans-serif}.byline{font:15px/1.4 sans-serif;opacity:.65;margin:0 0 22px}.byline a{color:inherit}.notice{font:16px/1.45 sans-serif;border:2px solid;border-radius:10px;padding:10px 14px;margin:0 0 22px}.post-meta{font:14px/1.4 sans-serif;margin:0 0 6px;break-after:avoid}.post-meta a{display:flex;justify-content:space-between;color:inherit;text-decoration:none;opacity:.6}.note{font:15px/1.4 sans-serif;white-space:normal;border:1px solid;border-radius:8px;padding:8px 12px;opacity:.7}.list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}a{color:#000;text-decoration:underline}hr{border:0;border-top:1px solid #000;opacity:.3;margin:24px 0}figure{margin:16px 0}.print-info{font:11px/1.4 sans-serif;margin-top:32px}" + (export ? "" : ".print-info{display:none}@media print{.print-info{display:block}}") + (dark ? "@media screen{body{color:#eee;background:#000}a{color:#eee}hr{border-top-color:#eee}}" : "") + "</style></head><body>");
+        String source = document.optString("source");
+        String host = "";
         try {
-            String sourceHost = (new URI(source)).getHost();
-            if (sourceHost != null) {
-                host = sourceHost;
-            }
+            host = (new URI(source)).getHost();
         } catch (Exception ignored) {
         }
+        String open = webUrl(source) ? "<a href=\"" + escape(source) + "\">" + (xHost(host) ? "Open on X" : "Open original") + "</a>" : "";
+        String byline;
+        if (isThread) {
+            html.append("<h1>@").append(thread.group(1)).append("</h1>");
+            byline = thread.group(2).equals("1") ? "Post" : "Thread · " + thread.group(2) + " posts";
+            if (!open.isEmpty()) byline += " · " + open;
+        } else {
+            html.append("<h1>").append(escape(title)).append("</h1>");
+            String handle = handle(source);
+            byline = handle.isEmpty() ? open : "@" + handle + (open.isEmpty() ? "" : " · " + open);
+        }
+        if (!byline.isEmpty()) html.append("<p class='byline'>").append(byline).append("</p>");
 
-        String details = "Saved " + escape(document.optString("savedAt")) + "<br>" + escape(source);
-        html.append("<details><summary>").append(escape(host)).append(" · Article details</summary><p>").append(details).append("</p></details><div class='print-info'>").append(details).append("</div>");
-        String warning = document.optString("warning");
-        if (!warning.isEmpty()) {
-            String summary = warning.startsWith("Partial capture:") ? "Partial capture · check captured posts" : "Capture notes";
-            if (warning.contains("image(s) could not be saved")) {
-                summary = summary + " · missing images";
-            }
-
-            html.append("<details class='warning'><summary>").append(summary).append("</summary><p>").append(escape(warning)).append("</p></details><div class='print-info'>").append(escape(warning)).append("</div>");
+        if (preview) {
+            String notice = isThread
+                ? "It has " + thread.group(2) + (thread.group(2).equals("1") ? " loaded post" : " loaded posts") + " by @" + thread.group(1) + ". Posts you didn't scroll to and replies from others are not included."
+                : "Compare it with the original. Video and anything that hadn't loaded are not saved.";
+            Matcher missing = MISSING_IMAGES.matcher(document.optString("warning"));
+            if (missing.find()) notice += " " + missing.group(1) + (missing.group(1).equals("1") ? " image" : " images") + " could not be saved.";
+            html.append("<div class='notice'><strong>Check this capture.</strong> ").append(escape(notice)).append("</div>");
         }
 
         JSONArray blocks = document.optJSONArray("blocks");
-        if (blocks != null) {
-            for(int i = 0; i < blocks.length(); ++i) {
+        if (blocks != null && isThread) {
+            List<List<JSONObject>> posts = new ArrayList<>();
+            posts.add(new ArrayList<>());
+            for (int i = 0; i < blocks.length(); ++i) {
                 JSONObject block = blocks.optJSONObject(i);
-                if (block != null) {
-                    String text = inline(block);
-                    switch (block.optString("kind")) {
-                        case "divider":
-                            html.append("<hr>");
-                            break;
-                        case "heading":
-                            int level = Math.max(2, Math.min(6, block.optInt("level", 2)));
-                            html.append("<h").append(level).append(">").append(text).append("</h").append(level).append(">");
-                            break;
-                        case "code":
-                            html.append("<pre>").append(escape(block.optString("text"))).append("</pre>");
-                            break;
-                        case "quote":
-                            html.append("<blockquote>").append(text).append("</blockquote>");
-                            break;
-                        case "listItem":
-                            html.append("<p class='list-item' style='margin-left:").append(Math.max(0, Math.min(8, block.optInt("depth", 1)) - 1)).append("em'>").append(escape(block.optString("marker", "•"))).append(" ").append(text).append("</p>");
-                            break;
-                        case "link":
-                            if (webUrl(block.optString("url"))) {
-                                html.append("<p><a href=\"").append(escape(block.optString("url"))).append("\">").append(text).append("</a></p>");
-                            }
-                            break;
-                        case "image":
-                            text = escape(block.optString("text"));
-                            String data = block.optString("data");
-                            if (data.matches("data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\\r\\n]+")) {
-                                html.append("<figure><img src=\"").append(data).append("\" alt=\"").append(text).append("\">");
-                                if (!text.isEmpty() && !"Image".equals(text)) {
-                                    html.append("<figcaption>").append(text).append("</figcaption>");
-                                }
-
-                                html.append("</figure>");
-                            } else {
-                                html.append("<p>[Image unavailable offline: ").append(text).append("]</p>");
-                            }
-                            break;
-                        default:
-                            html.append("<p>").append(text).append("</p>");
-                    }
+                if (block == null) continue;
+                if ("divider".equals(block.optString("kind"))) posts.add(new ArrayList<>());
+                else posts.get(posts.size() - 1).add(block);
+            }
+            for (int i = 0; i < posts.size(); ++i) {
+                if (i > 0) html.append("<hr>");
+                JSONObject link = null;
+                for (JSONObject block : posts.get(i)) {
+                    if ("link".equals(block.optString("kind")) && webUrl(block.optString("url"))) link = block;
                 }
+                if (link != null) {
+                    html.append("<p class='post-meta'><a href=\"").append(escape(link.optString("url"))).append("\"><span>").append(i + 1).append(" / ").append(posts.size())
+                        .append("</span><span>").append(escape(postDate(link.optString("text")))).append("</span></a></p>");
+                }
+                for (JSONObject block : posts.get(i)) {
+                    if (block != link) block(html, block);
+                }
+            }
+        } else if (blocks != null) {
+            for (int i = 0; i < blocks.length(); ++i) {
+                JSONObject block = blocks.optJSONObject(i);
+                if (block != null) block(html, block);
             }
         }
 
+        String savedAt = document.optString("savedAt");
+        if (!savedAt.isEmpty()) {
+            html.append("<div class='print-info'>Saved ").append(escape(savedAt)).append("<br>").append(escape(source)).append("</div>");
+        }
         return html.append("</body></html>").toString();
+    }
+
+    private static void block(StringBuilder html, JSONObject block) {
+        String text = inline(block);
+        switch (block.optString("kind")) {
+            case "divider":
+                html.append("<hr>");
+                break;
+            case "heading":
+                int level = Math.max(2, Math.min(6, block.optInt("level", 2)));
+                html.append("<h").append(level).append(">").append(text).append("</h").append(level).append(">");
+                break;
+            case "code":
+                html.append("<pre>").append(escape(block.optString("text"))).append("</pre>");
+                break;
+            case "quote":
+                html.append("<blockquote>").append(text).append("</blockquote>");
+                break;
+            case "listItem":
+                html.append("<p class='list-item' style='margin-left:").append(Math.max(0, Math.min(8, block.optInt("depth", 1)) - 1)).append("em'>").append(escape(block.optString("marker", "•"))).append(" ").append(text).append("</p>");
+                break;
+            case "link":
+                if (webUrl(block.optString("url"))) {
+                    html.append("<p><a href=\"").append(escape(block.optString("url"))).append("\">").append(text).append("</a></p>");
+                }
+                break;
+            case "image":
+                text = escape(block.optString("text"));
+                String data = block.optString("data");
+                if (data.matches("data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\\r\\n]+")) {
+                    html.append("<figure><img src=\"").append(data).append("\" alt=\"").append(text).append("\">");
+                    if (!text.isEmpty() && !"Image".equals(text)) {
+                        html.append("<figcaption>").append(text).append("</figcaption>");
+                    }
+
+                    html.append("</figure>");
+                } else {
+                    html.append("<p class='note'>Image unavailable offline: ").append(text).append("</p>");
+                }
+                break;
+            default:
+                Matcher placeholder = PLACEHOLDER.matcher(block.optString("text").trim());
+                if (block.optJSONArray("runs") == null && placeholder.matches()) {
+                    html.append("<p class='note'>").append(escape(placeholder.group(1))).append("</p>");
+                } else {
+                    html.append("<p>").append(text).append("</p>");
+                }
+        }
     }
 }

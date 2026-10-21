@@ -32,9 +32,13 @@ final class DocumentFiles {
     }
 
     static void writeSummary(File file, JSONObject document) throws Exception {
-        writeAtomic(new File(file + ".meta"), new JSONObject()
-            .put("title", document.optString("title"))
-            .put("savedAt", document.optString("savedAt")).toString());
+        writeAtomic(new File(file + ".meta"), ReaderDocument.summary(document).toString());
+    }
+
+    static void delete(File file) throws Exception {
+        Files.deleteIfExists(file.toPath());
+        Files.deleteIfExists(new File(file + ".meta").toPath());
+        Files.deleteIfExists(new File(file + ".title-backup").toPath());
     }
 
     static File save(File draft, File library, JSONObject document) throws Exception {

@@ -3,21 +3,31 @@ package dev.xave.reader;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.print.PrintManager;
+import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -36,9 +46,13 @@ import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.IntConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -60,7 +74,10 @@ public class MainActivity extends Activity {
     private int zoom;
     private String pendingExportFile;
     private boolean dark;
-    private TextView tip;
+    private boolean pageError;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Runnable poll = this::pollStatus;
+    private final Set<File> selected = new HashSet<>();
 
     @Override public void onCreate(Bundle state) {
         String theme = getPreferences(0).getString("theme", "system");
@@ -118,11 +135,13 @@ public class MainActivity extends Activity {
     private int dp(int value) { return (int)(value * getResources().getDisplayMetrics().density); }
     private int fg() { return dark ? 0xFFEEEEEE : Color.BLACK; }
     private int bg() { return dark ? Color.BLACK : Color.WHITE; }
+    private int muted() { return dark ? 0xFFAAAAAA : 0xFF555555; }
 
     private void layout(String nextMode) {
         rememberPosition();
         generation++;
         busy = false;
+        ui.removeCallbacks(poll);
         if (browser != null) {
             browser.stopLoading();
             if (browser.getParent() != null) ((android.view.ViewGroup)browser.getParent()).removeView(browser);
@@ -149,85 +168,238 @@ public class MainActivity extends Activity {
         return view;
     }
 
-    private Button button(String text, Runnable action) {
-        Button b = new Button(this);
-        b.setText(text); b.setTextColor(fg()); b.setAllCaps(false);
-        b.setMinHeight(dp(48)); b.setOnClickListener(v -> action.run());
+    private GradientDrawable outline(boolean filled) {
+        GradientDrawable shape = new GradientDrawable();
+        shape.setCornerRadius(dp(24)); shape.setStroke(dp(2), fg());
+        if (filled) shape.setColor(fg());
+        return shape;
+    }
+
+    // Outlined and filled pills instead of grey Material buttons, which dither on e-ink screens.
+    private TextView pill(String text, boolean filled, Runnable action) {
+        TextView b = new TextView(this);
+        b.setText(text); b.setTextSize(16); b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setTextColor(filled ? bg() : fg()); b.setBackground(outline(filled));
+        b.setGravity(Gravity.CENTER); b.setMinHeight(dp(44)); b.setPadding(dp(20), 0, dp(20), 0);
+        b.setOnClickListener(v -> action.run());
         return b;
     }
 
-    private LinearLayout row() {
+    private TextView icon(String glyph, View.OnClickListener action) {
+        TextView b = label(glyph, 30);
+        b.setGravity(Gravity.CENTER); b.setMinWidth(dp(48)); b.setMinHeight(dp(48));
+        b.setOnClickListener(action);
+        return b;
+    }
+
+    private LinearLayout bar() {
         LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
         screen.addView(row);
         return row;
     }
 
-    private void add(LinearLayout row, Button b) {
-        row.addView(b, new LinearLayout.LayoutParams(0, dp(52), 1));
+    private void divider(LinearLayout parent) {
+        View line = new View(this);
+        line.setBackgroundColor(fg() & 0x40FFFFFF);
+        parent.addView(line, new LinearLayout.LayoutParams(-1, dp(1)));
+    }
+
+    private void section(LinearLayout entries, String text) {
+        TextView view = label(text.toUpperCase(java.util.Locale.ROOT), 13);
+        view.setTypeface(Typeface.DEFAULT_BOLD); view.setTextColor(muted()); view.setLetterSpacing(0.06f);
+        view.setPadding(0, dp(18), 0, dp(4));
+        entries.addView(view);
+    }
+
+    private void popup(View anchor, String[] items, IntConsumer choose) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        for (int i = 0; i < items.length; i++) menu.getMenu().add(0, i, i, items[i]);
+        menu.setOnMenuItemClickListener(item -> { choose.accept(item.getItemId()); return true; });
+        menu.show();
+    }
+
+    private static File[] newestFirst(File dir) {
+        File[] files = dir.listFiles((d,name) -> name.endsWith(".json"));
+        if (files == null) return new File[0];
+        Arrays.sort(files, (a,b) -> Long.compare(b.lastModified(), a.lastModified()));
+        return files;
     }
 
     private void showLibrary() {
         layout("library"); document = null; currentFile = null; currentDraft = null;
-        screen.addView(label("Xave · Offline library", 25));
+        LinearLayout top = bar();
+        TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
+        top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        top.addView(icon("⋮", v -> popup(v, new String[]{"Manage multiple", "Theme"}, which -> {
+            if (which == 0) manageMultiple(); else chooseTheme();
+        })));
+        LinearLayout field = bar();
+        field.setBackground(outline(false)); field.setPadding(dp(16), dp(3), dp(3), dp(3));
+        ((LinearLayout.LayoutParams)field.getLayoutParams()).setMargins(0, dp(10), 0, dp(4));
         EditText url = new EditText(this);
-        url.setTextSize(18); url.setSingleLine(true); url.setHint("Paste a web link");
+        url.setTextSize(17); url.setSingleLine(true); url.setHint("Paste an X post link");
+        url.setTextColor(fg()); url.setHintTextColor(muted()); url.setBackground(null);
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
-        screen.addView(url);
-        LinearLayout actions = row();
-        add(actions, button("Open link", () -> openOnline(url.getText().toString())));
-        add(actions, button("Theme", this::chooseTheme));
-        screen.addView(label("Or share a link from another app to Xave. Internet is needed only to capture new items.", 16));
-        File[] files = library().listFiles((dir,name) -> name.endsWith(".json"));
-        int count = files == null ? 0 : files.length;
+        url.setImeOptions(EditorInfo.IME_ACTION_GO);
+        url.setOnEditorActionListener((v, action, event) -> { openOnline(url.getText().toString()); return true; });
+        field.addView(url, new LinearLayout.LayoutParams(0, -2, 1));
+        field.addView(pill("Open", true, () -> openOnline(url.getText().toString())));
+        File[] files = newestFirst(library());
         ScrollView scroll = new ScrollView(this);
         LinearLayout entries = new LinearLayout(this); entries.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(entries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        File[] unfinished = drafts().listFiles((dir,name) -> name.endsWith(".json"));
-        if (unfinished != null && unfinished.length > 0) {
-            entries.addView(label("Unfinished captures · " + unfinished.length, 20));
-            Arrays.sort(unfinished, (a,b) -> Long.compare(b.lastModified(), a.lastModified()));
+        File[] unfinished = newestFirst(drafts());
+        if (unfinished.length > 0) {
+            section(entries, "Not saved yet · " + unfinished.length);
             for (File draft : unfinished) addLibraryEntry(entries, draft, true);
         }
-        entries.addView(label("Saved articles · " + count, 21));
-        if (files == null || files.length == 0) entries.addView(label("Your saved reading will appear here.", 19));
-        else {
-            Arrays.sort(files, (a,b) -> Long.compare(b.lastModified(), a.lastModified()));
-            for (File file : files) addLibraryEntry(entries, file, false);
+        section(entries, "Saved · " + files.length);
+        if (files.length == 0) {
+            TextView empty = label("Your saved reading will appear here.", 17);
+            empty.setTextColor(muted()); empty.setPadding(0, dp(8), 0, dp(8));
+            entries.addView(empty);
         }
+        for (File file : files) addLibraryEntry(entries, file, false);
     }
 
     private void addLibraryEntry(LinearLayout entries, File file, boolean draft) {
+        entry(entries, file, draft).setOnClickListener(v -> { if (draft) openDraft(file); else openSaved(file); });
+    }
+
+    /** A library row: the first post or article title, with the author and post count under it. */
+    private LinearLayout entry(LinearLayout entries, File file, boolean draft) {
         JSONObject summary;
         boolean repair = false;
         try {
             summary = new JSONObject(new String(Files.readAllBytes(new File(file + ".meta").toPath()), StandardCharsets.UTF_8));
-            repair = !summary.has("title") || summary.optString("title").trim().isEmpty();
+            repair = !summary.has("detail") || summary.optString("title").trim().isEmpty();
         } catch (Exception e) { summary = new JSONObject(); repair = true; }
-        String title = summary.optString("title", draft ? "Unfinished capture" : "Saved article");
-        Button item = button(title, () -> { if (draft) openDraft(file); else openSaved(file); });
-        item.setTextSize(20);
-        item.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
-        item.setPadding(dp(12), dp(12), dp(12), dp(12)); item.setMinHeight(dp(64));
-        entries.addView(item);
-        TextView date = label((draft ? "Draft · " : "") + summary.optString("savedAt"), 14);
-        entries.addView(date);
+        String title = summary.optString("title", "Untitled");
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(0, dp(12), 0, dp(12));
+        LinearLayout text = new LinearLayout(this); text.setOrientation(LinearLayout.VERTICAL);
+        TextView item = label(title, 18);
+        item.setPadding(0, 0, 0, 0); item.setMaxLines(2); item.setEllipsize(TextUtils.TruncateAt.END);
+        TextView detail = label(summary.optString("detail"), 14);
+        detail.setPadding(0, dp(3), 0, 0); detail.setTextColor(muted());
+        text.addView(item); text.addView(detail);
+        row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
+        entries.addView(row);
+        divider(entries);
         if (repair || ReaderDocument.genericTitle(title)) {
             int token = generation;
             io.execute(() -> {
                 try {
                     JSONObject doc = draft ? readDocument(file) : readSavedDocument(file);
+                    JSONObject fresh = ReaderDocument.summary(doc);
                     try { writeSummary(file, doc); } catch (Exception ignored) { }
                     runOnUiThread(() -> {
                         if (token == generation && !isFinishing()) {
-                            item.setText(doc.optString("title", "Saved article"));
-                            date.setText((draft ? "Draft · " : "") + doc.optString("savedAt"));
+                            item.setText(fresh.optString("title"));
+                            detail.setText(fresh.optString("detail"));
                         }
                     });
                 } catch (Exception e) {
-                    runOnUiThread(() -> { if (token == generation) date.setText("Could not read this item · tap to retry"); });
+                    runOnUiThread(() -> { if (token == generation) detail.setText("Could not read this item · tap to retry"); });
                 }
             });
         }
+        return row;
+    }
+
+    private void manageMultiple() {
+        new AlertDialog.Builder(this).setTitle("Manage multiple")
+            .setItems(new String[]{"Select captures to save", "Select items to delete"}, (dialog,which) -> showSelection(which == 1))
+            .show();
+    }
+
+    /** Save mode lists only unsaved captures; delete mode lists everything. */
+    private void showSelection(boolean delete) {
+        layout(delete ? "delete" : "save"); document = null; currentFile = null; currentDraft = null;
+        selected.clear();
+        LinearLayout top = bar();
+        top.addView(icon("‹", v -> showLibrary()));
+        TextView heading = label(delete ? "Select to delete" : "Select to save", 19);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        top.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView action = pill(delete ? "Delete" : "Save", true, () -> applySelection(delete));
+        top.addView(action);
+        divider(screen);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout entries = new LinearLayout(this); entries.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(entries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        File[] unfinished = newestFirst(drafts());
+        File[] files = delete ? newestFirst(library()) : new File[0];
+        if (unfinished.length > 0) {
+            section(entries, "Not saved yet · " + unfinished.length);
+            for (File draft : unfinished) selectable(entries, draft, true, action, delete);
+        }
+        if (files.length > 0) {
+            section(entries, "Saved · " + files.length);
+            for (File file : files) selectable(entries, file, false, action, delete);
+        }
+        if (unfinished.length + files.length == 0) {
+            TextView empty = label(delete ? "Nothing to delete." : "Every capture is already saved.", 17);
+            empty.setTextColor(muted()); empty.setPadding(0, dp(16), 0, dp(8));
+            entries.addView(empty);
+        }
+        updateSelection(action, delete);
+    }
+
+    private void selectable(LinearLayout entries, File file, boolean draft, TextView action, boolean delete) {
+        LinearLayout row = entry(entries, file, draft);
+        CheckBox box = new CheckBox(this);
+        box.setClickable(false); box.setButtonTintList(ColorStateList.valueOf(fg()));
+        row.addView(box, 0);
+        row.setOnClickListener(v -> {
+            box.setChecked(!box.isChecked());
+            if (box.isChecked()) selected.add(file); else selected.remove(file);
+            updateSelection(action, delete);
+        });
+    }
+
+    private void updateSelection(TextView action, boolean delete) {
+        action.setText((delete ? "Delete" : "Save") + (selected.isEmpty() ? "" : " " + selected.size()));
+        action.setEnabled(!selected.isEmpty()); action.setAlpha(selected.isEmpty() ? 0.35f : 1);
+    }
+
+    private void applySelection(boolean delete) {
+        if (busy || selected.isEmpty()) return;
+        List<File> targets = new ArrayList<>(selected);
+        if (!delete) { runSelection(targets, false); return; }
+        String items = targets.size() + (targets.size() == 1 ? " item" : " items");
+        new AlertDialog.Builder(this).setMessage("Delete " + items + "? This cannot be undone.")
+            .setNegativeButton("Keep", null)
+            .setPositiveButton("Delete", (dialog,which) -> runSelection(targets, true)).show();
+    }
+
+    private void runSelection(List<File> targets, boolean delete) {
+        if (busy) return;
+        busy = true;
+        int token = generation;
+        io.execute(() -> {
+            int failed = 0;
+            for (File target : targets) {
+                try {
+                    if (delete) DocumentFiles.delete(target);
+                    else DocumentFiles.save(target, library(), readDocument(target));
+                } catch (Exception e) { failed++; }
+            }
+            int missed = failed, done = targets.size() - failed;
+            runOnUiThread(() -> {
+                if (token != generation) return;
+                if (delete) {
+                    SharedPreferences.Editor prefs = getPreferences(0).edit();
+                    for (File target : targets) if (!target.exists()) prefs.remove("position:" + target.getName());
+                    prefs.apply();
+                }
+                showLibrary();
+                if (missed > 0) error(delete ? "Could not delete " + missed + " of " + targets.size() + " items."
+                    : "Could not save " + missed + " of " + targets.size() + " captures. They are kept under Not saved yet.");
+                else Toast.makeText(this, (delete ? "Deleted " : "Saved ") + done + (done == 1 ? " item" : " items"), Toast.LENGTH_SHORT).show();
+            });
+        });
     }
 
     private JSONObject readDocument(File file) throws Exception {
@@ -291,12 +463,14 @@ public class MainActivity extends Activity {
         else destroySource();
         layout("online"); document = null; currentFile = null; currentDraft = null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
-        LinearLayout top = row();
-        add(top, button("Library", this::showLibrary));
-        Button capture = button("Preview capture", this::capture);
-        add(top, capture);
-        status = label("Loading…", 15); screen.addView(status);
-        tip = label(tipFor(Uri.parse(url).getHost()), 15); screen.addView(tip);
+        LinearLayout top = bar();
+        top.addView(icon("‹", v -> showLibrary()));
+        status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
+        top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+        top.addView(pill("Capture", true, this::capture));
+        TextView tip = label("Scroll the thread and expand long posts first.", 14);
+        tip.setTextColor(muted()); screen.addView(tip);
+        pageError = false;
         browser = resumed == null ? new WebView(this) : resumed;
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
@@ -313,24 +487,48 @@ public class MainActivity extends Activity {
                 }
                 return false;
             }
+            @Override public void onPageStarted(WebView view, String loading, android.graphics.Bitmap icon) {
+                if (!"online".equals(mode) || view != browser) return;
+                pageError = false;
+                status.setText("Loading…");
+            }
             @Override public void onPageFinished(WebView view, String loaded) {
                 if (!"online".equals(mode) || view != browser) return;
-                status.setText("Ready · " + Uri.parse(loaded).getHost());
-                tip.setText(tipFor(Uri.parse(loaded).getHost()));
                 view.evaluateJavascript(collector, null);
                 CookieManager.getInstance().flush();
+                pollStatus();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError e) {
-                if (request.isForMainFrame()) status.setText("Page could not load. Check Wi-Fi and the link.");
+                if (!request.isForMainFrame()) return;
+                pageError = true;
+                status.setText("Page could not load. Check Wi-Fi and the link.");
             }
         });
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         if (resumed == null) browser.loadUrl(url);
         else {
             browser.onResume();
-            status.setText("Ready · " + Uri.parse(url).getHost());
             browser.evaluateJavascript(collector, null);
+            pollStatus();
         }
+    }
+
+    /** Shows how much of the page the collector has found, so you know when to stop scrolling. */
+    private void pollStatus() {
+        ui.removeCallbacks(poll);
+        if (!"online".equals(mode) || browser == null) return;
+        WebView page = browser;
+        if (!busy && !pageError) page.evaluateJavascript("window.__xaveCollector ? window.__xaveCollector.summary() : null", result -> {
+            if (page != browser || busy || pageError) return;
+            try {
+                JSONObject found = new JSONObject(result);
+                int posts = found.getInt("posts");
+                status.setText(found.getBoolean("article") ? "X Article loaded"
+                    : posts > 0 ? posts + (posts == 1 ? " post loaded" : " posts loaded")
+                    : found.getBoolean("status") ? "Loading posts…" : "Ready");
+            } catch (Exception ignored) { }
+        });
+        ui.postDelayed(poll, 1000);
     }
 
     private void capture() {
@@ -344,7 +542,7 @@ public class MainActivity extends Activity {
             try {
                 Object decoded = new JSONTokener(encoded).nextValue();
                 JSONObject doc = new JSONObject((String)decoded);
-                if (doc.has("error")) { busy = false; status.setText(doc.getString("error")); return; }
+                if (doc.has("error")) { busy = false; error(doc.getString("error")); return; }
                 doc.put("schemaVersion", 2);
                 doc.put("savedAt", DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date()));
                 JSONArray blocks = doc.getJSONArray("blocks");
@@ -366,11 +564,11 @@ public class MainActivity extends Activity {
                         runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, null, draft); });
                     } catch (Exception e) {
                         runOnUiThread(() -> { if (token == generation) {
-                            busy = false; status.setText("Could not keep this capture. Check available storage and retry.");
+                            busy = false; error("Could not keep this capture. Check available storage and retry.");
                         } });
                     }
                 });
-            } catch (Exception e) { busy = false; status.setText("Could not capture this page. Wait for it to load, then retry."); }
+            } catch (Exception e) { busy = false; error("Could not capture this page. Wait for it to load, then retry."); }
         });
     }
 
@@ -420,10 +618,15 @@ public class MainActivity extends Activity {
             sourceBrowser.onPause(); browser = null;
         }
         layout("reader"); document = doc; currentFile = file; currentDraft = draft;
-        LinearLayout top = row();
-        add(top, button("Library", this::showLibrary));
-        add(top, button(file == null ? "Save offline" : "Export", file == null ? this::saveDocument : this::exportDocument));
-        add(top, button("More", this::readerOptions));
+        LinearLayout top = bar();
+        top.addView(icon("‹", v -> showLibrary()));
+        if (file == null) {
+            TextView state = label("Preview · not saved", 14); state.setTextColor(muted());
+            top.addView(state, new LinearLayout.LayoutParams(0, -2, 1));
+            top.addView(pill("Save", true, this::saveDocument));
+        } else top.addView(new View(this), new LinearLayout.LayoutParams(0, 0, 1));
+        top.addView(icon("⋮", this::readerOptions));
+        divider(screen);
         browser = new WebView(this);
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
@@ -453,16 +656,14 @@ public class MainActivity extends Activity {
         });
         browser.setOnScrollChangeListener((view,x,y,oldX,oldY) -> updateReadingProgress());
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout footer = row();
-        add(footer, button("Prev", () -> browser.pageUp(false)));
-        LinearLayout info = new LinearLayout(this); info.setOrientation(LinearLayout.VERTICAL);
-        info.setGravity(android.view.Gravity.CENTER);
-        TextView state = label(file == null ? "Preview · draft kept" : "Available offline", 12);
-        state.setPadding(0,0,0,0); info.addView(state);
-        readingProgress = label("0%", 14); readingProgress.setPadding(0,0,0,0); info.addView(readingProgress);
-        footer.addView(info, new LinearLayout.LayoutParams(0, dp(52), 1));
-        add(footer, button("Next", () -> browser.pageDown(false)));
-        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark), "text/html", "UTF-8", null);
+        divider(screen);
+        LinearLayout footer = bar(); footer.setPadding(0, dp(8), 0, dp(8));
+        footer.addView(pill("Prev", false, () -> browser.pageUp(false)));
+        readingProgress = label("0%", 16); readingProgress.setTypeface(Typeface.DEFAULT_BOLD);
+        readingProgress.setGravity(Gravity.CENTER);
+        footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
+        footer.addView(pill("Next", false, () -> browser.pageDown(false)));
+        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, file == null), "text/html", "UTF-8", null);
     }
 
     private void updateReadingProgress() {
@@ -472,20 +673,25 @@ public class MainActivity extends Activity {
         readingProgress.setText(percent + "%");
     }
 
-    private void readerOptions() {
+    private void readerOptions(View anchor) {
         boolean draft = currentDraft != null;
-        new AlertDialog.Builder(this).setTitle("Reading options")
-            .setItems(new String[]{"Text size", "Theme", draft ? "Back to source" : "Open source online",
-                draft ? "Discard draft" : "Delete from library"}, (dialog,which) -> {
-                if (which == 0) {
-                    LinearLayout sizes = new LinearLayout(this);
-                    sizes.addView(button("A−", () -> changeZoom(-10)), new LinearLayout.LayoutParams(0,dp(52),1));
-                    sizes.addView(button("A+", () -> changeZoom(10)), new LinearLayout.LayoutParams(0,dp(52),1));
-                    new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
-                } else if (which == 1) chooseTheme();
-                else if (which == 2) openOnline(document.optString("source"));
-                else deleteCurrent();
-            }).show();
+        String[] items = draft ? new String[]{"Text size", "Theme", "Back to source", "Discard draft"}
+            : new String[]{"Text size", "Theme", "Export", "Open on X", "Delete"};
+        popup(anchor, items, which -> {
+            if (which == 0) {
+                LinearLayout sizes = new LinearLayout(this);
+                sizes.setPadding(dp(20), dp(12), dp(20), 0);
+                LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, -2, 1);
+                half.setMargins(dp(6), 0, dp(6), 0);
+                sizes.addView(pill("A−", false, () -> changeZoom(-10)), half);
+                sizes.addView(pill("A+", false, () -> changeZoom(10)), half);
+                new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
+            } else if (which == 1) chooseTheme();
+            else if (draft) { if (which == 2) openOnline(document.optString("source")); else deleteCurrent(); }
+            else if (which == 2) exportDocument();
+            else if (which == 3) openOnline(document.optString("source"));
+            else deleteCurrent();
+        });
     }
 
     private void chooseTheme() {
@@ -500,25 +706,17 @@ public class MainActivity extends Activity {
             }).show();
     }
 
-    private String tipFor(String host) {
-        return ReaderDocument.xHost(host)
-            ? "X: sign in here if needed, expand long posts, and scroll to load the thread. Then preview and check the captured posts."
-            : "Sign in if the site requires it and scroll to load everything you want to keep. Then preview the capture.";
-    }
-
     private void deleteCurrent() {
         boolean draft = currentDraft != null;
         File target = draft ? currentDraft : currentFile;
         if (target == null || busy) return;
-        new AlertDialog.Builder(this).setMessage(draft ? "Discard this unfinished capture?" : "Delete this article from your library? This cannot be undone.")
+        new AlertDialog.Builder(this).setMessage(draft ? "Discard this unfinished capture?" : "Delete this from your library? This cannot be undone.")
             .setNegativeButton("Keep", null)
             .setPositiveButton(draft ? "Discard" : "Delete", (dialog,which) -> {
                 busy = true; int token = generation;
                 io.execute(() -> {
                     try {
-                        Files.deleteIfExists(target.toPath());
-                        Files.deleteIfExists(new File(target + ".meta").toPath());
-                        Files.deleteIfExists(new File(target + ".title-backup").toPath());
+                        DocumentFiles.delete(target);
                         runOnUiThread(() -> { if (token == generation) {
                             showLibrary();
                             // Cleared after leaving the reader, which records the position on exit.
@@ -618,6 +816,7 @@ public class MainActivity extends Activity {
     }
     @Override protected void onDestroy() {
         generation++;
+        ui.removeCallbacks(poll);
         if (browser != null) browser.destroy();
         destroySource();
         io.shutdown();

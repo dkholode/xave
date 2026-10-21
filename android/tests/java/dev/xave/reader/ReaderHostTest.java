@@ -6,6 +6,8 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
+import java.util.TimeZone;
 
 /** Runs the actual renderer and disk code with Android Studio's pure-Java org.json. */
 public final class ReaderHostTest {
@@ -34,7 +36,24 @@ public final class ReaderHostTest {
             .put("warning", "Page capture: check the preview against the original. Only loaded text and images are saved.")
             .put("blocks", blocks);
     }
+    private static JSONObject text(String text) throws Exception { return new JSONObject().put("kind", "text").put("text", text); }
+    private static JSONObject link(String text, String url) throws Exception { return new JSONObject().put("kind", "link").put("text", text).put("url", url); }
+    /** Two posts in the shape capture.js emits: an ISO time from a signed-in page, visible text from an anonymous one. */
+    private static JSONObject thread() throws Exception {
+        JSONArray blocks = new JSONArray()
+            .put(text("I rebuilt our build pipeline\nthree times this year."))
+            .put(link("2026-10-19T12:40:11.000Z", "https://x.com/alice/status/1"))
+            .put(new JSONObject().put("kind", "divider"))
+            .put(text("1. Caching the dependency step."))
+            .put(text("[Quoted post — see original]"))
+            .put(link("6:21 PM · Oct 7, 2026", "https://x.com/alice/status/2"));
+        return new JSONObject().put("title", "@alice · 2 posts").put("source", "https://x.com/alice/status/1")
+            .put("savedAt", "Oct 21, 2026 8:40 PM").put("blocks", blocks)
+            .put("warning", "Partial capture: loaded posts by @alice only. 1 image(s) could not be saved; placeholders appear below.");
+    }
     public static void main(String[] args) throws Exception {
+        Locale.setDefault(Locale.US);
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
         JSONObject doc = sample();
         String html = ReaderDocument.html(doc);
         check(html.contains("Read <strong>this important</strong> sentence with <a href=\"https://example.org/reference?x=1&amp;y=2\">a reference</a> here.</p>"), "Fragmented paragraph or missing inline formatting");
@@ -57,19 +76,42 @@ public final class ReaderHostTest {
             .put(new JSONObject().put("kind", "text").put("text", "Legacy paragraph"))));
         check(legacy.contains("<p>Legacy paragraph</p>"), "Broke an older saved document");
         pass("Older plain-text saves remain readable without rewriting their content");
-        check(html.contains("<details><summary>example.org") && html.contains("class='print-info'") && html.contains("Paragraph 11"), "Lost metadata or final paragraph");
-        String partial = ReaderDocument.html(new JSONObject().put("warning", "Partial capture: incomplete. 1 image(s) could not be saved"));
-        check(partial.contains("Partial capture · check captured posts · missing images"), "Important warning was hidden");
-        pass("Compact metadata preserves export details and prominent partial/missing-image summaries");
+        check(html.contains("Paragraph 11"), "Lost the final paragraph");
 
-        String night = ReaderDocument.html(doc, true);
+        String reading = ReaderDocument.html(thread(), false, false);
+        check(reading.contains("<h1>@alice</h1>") && reading.contains("Thread · 2 posts"), "Thread header lost its author or post count");
+        check(reading.contains("<a href=\"https://x.com/alice/status/1\"><span>1 / 2</span><span>Oct 19, 2026</span></a>")
+            && reading.contains("<a href=\"https://x.com/alice/status/2\"><span>2 / 2</span><span>6:21 PM · Oct 7, 2026</span></a>"), "Posts lost their number, date, or link");
+        check(!reading.contains("2026-10-19T12:40") && !reading.contains("<details"), "Raw timestamp or details row is still shown");
+        pass("Threads read as numbered posts with readable dates that link to each post");
+
+        check(reading.contains("<p class='note'>Quoted post — see original</p>") && !reading.contains("[Quoted post"), "Placeholder still reads as body text");
+        pass("Quoted-post and media placeholders render as notes, not bracketed text");
+
+        String preview = ReaderDocument.html(thread(), false, true);
+        check(preview.contains("Check this capture.") && preview.contains("2 loaded posts by @alice") && preview.contains("1 image could not be saved"), "Preview hides what the capture contains");
+        check(!reading.contains("Check this capture.") && !reading.contains("Partial capture"), "Saved copy still carries the capture warning");
+        pass("The capture notice appears while previewing and not on saved copies");
+
+        String exported = ReaderDocument.html(thread());
+        check(exported.contains("Saved Oct 21, 2026 8:40 PM") && exported.contains("https://x.com/alice/status/1"), "Export lost the save date or source");
+        check(reading.contains(".print-info{display:none}") && !exported.contains(".print-info{display:none}"), "Save date shows on screen in the app or is hidden in exports");
+        pass("The save date appears in exports and print only");
+
+        JSONObject threadRow = ReaderDocument.summary(thread());
+        check(threadRow.getString("title").equals("I rebuilt our build pipeline three times this year.") && threadRow.getString("detail").equals("@alice · 2 posts"), "Thread row is not its first post: " + threadRow);
+        JSONObject articleRow = ReaderDocument.summary(new JSONObject().put("title", "Why e-ink finally works").put("source", "https://x.com/bob/status/9"));
+        check(articleRow.getString("title").equals("Why e-ink finally works") && articleRow.getString("detail").equals("@bob · Article"), "Article row lost its title or author: " + articleRow);
+        pass("Library rows show the first post or article title, with author and post count");
+
+        String night = ReaderDocument.html(doc, true, false);
         check(!html.contains("@media screen{body{color:#eee") && night.contains("@media screen{body{color:#eee;background:#000}"), "Dark reading colors not applied on screen only");
         check(night.contains("@media print{"), "Dark mode removed print styles");
         pass("Dark reading colors apply on screen while print and export stay light");
 
         check(ReaderDocument.xHost("x.com") && ReaderDocument.xHost("mobile.twitter.com") && !ReaderDocument.xHost("example.com")
             && !ReaderDocument.xHost("notx.com") && !ReaderDocument.xHost(null), "Misclassified an X host");
-        pass("Only X hosts receive X-specific capture tips");
+        pass("Only X hosts are treated as X");
 
         Path root = Files.createTempDirectory("xave-host-test-");
         try {
@@ -103,12 +145,22 @@ public final class ReaderHostTest {
             check(failed && java.util.Arrays.equals(before, Files.readAllBytes(saved.toPath())), "Failed write damaged the previous copy");
             check(library.listFiles((d,n) -> n.endsWith(".tmp")).length == 0, "Failed write left a temporary file");
             pass("Failed atomic replacement preserves the previous copy and removes temporary output");
+
+            File keep = new File(library, "keep.json"); File gone = new File(library, "gone.json");
+            for (File item : new File[]{keep, gone}) {
+                DocumentFiles.writeAtomic(item, doc.toString()); DocumentFiles.writeSummary(item, doc);
+                Files.write(new File(item + ".title-backup").toPath(), new byte[]{1});
+            }
+            DocumentFiles.delete(gone);
+            check(!gone.exists() && !new File(gone + ".meta").exists() && !new File(gone + ".title-backup").exists(), "Delete left part of the item behind");
+            check(keep.isFile() && new File(keep + ".meta").isFile() && new File(keep + ".title-backup").isFile(), "Delete touched another item");
+            pass("Deleting an item removes it and its sidecar files, and nothing else");
         } finally {
             try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
                 for (Path path : (Iterable<Path>)paths.sorted(java.util.Comparator.reverseOrder())::iterator) Files.delete(path);
             }
         }
         Files.write(new File(args[0]).toPath(), html.getBytes(StandardCharsets.UTF_8));
-        System.out.println(passed + "/10 host checks passed");
+        System.out.println(passed + "/15 host checks passed");
     }
 }
