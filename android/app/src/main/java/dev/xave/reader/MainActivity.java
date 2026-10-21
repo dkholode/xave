@@ -411,7 +411,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Saves image files next to the draft; image blocks then refer to them by file name. */
+    /** Saves each image in the article's images folder; image blocks then refer to it by file name. */
     private void embedImages(JSONObject doc, ArrayList<String> cookies, String userAgent, int token, File images) {
         JSONArray blocks = doc.optJSONArray("blocks");
         ArrayList<Integer> pictures = new ArrayList<>();
