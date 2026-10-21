@@ -62,6 +62,15 @@ public final class ReaderHostTest {
         check(partial.contains("Partial capture · check captured posts · missing images"), "Important warning was hidden");
         pass("Compact metadata preserves export details and prominent partial/missing-image summaries");
 
+        String night = ReaderDocument.html(doc, true);
+        check(!html.contains("@media screen{body{color:#eee") && night.contains("@media screen{body{color:#eee;background:#000}"), "Dark reading colors not applied on screen only");
+        check(night.contains("@media print{"), "Dark mode removed print styles");
+        pass("Dark reading colors apply on screen while print and export stay light");
+
+        check(ReaderDocument.xHost("x.com") && ReaderDocument.xHost("mobile.twitter.com") && !ReaderDocument.xHost("example.com")
+            && !ReaderDocument.xHost("notx.com") && !ReaderDocument.xHost(null), "Misclassified an X host");
+        pass("Only X hosts receive X-specific capture tips");
+
         Path root = Files.createTempDirectory("xave-host-test-");
         try {
             File drafts = Files.createDirectory(root.resolve("drafts")).toFile();
@@ -100,6 +109,6 @@ public final class ReaderHostTest {
             }
         }
         Files.write(new File(args[0]).toPath(), html.getBytes(StandardCharsets.UTF_8));
-        System.out.println(passed + "/8 host checks passed");
+        System.out.println(passed + "/10 host checks passed");
     }
 }
