@@ -36,7 +36,7 @@ public final class ReaderHostTest {
     }
     public static void main(String[] args) throws Exception {
         JSONObject doc = sample();
-        String html = ReaderDocument.html(doc);
+        String html = ReaderDocument.html(doc, false, name -> null);
         check(html.contains("Read <strong>this important</strong> sentence with <a href=\"https://example.org/reference?x=1&amp;y=2\">a reference</a> here.</p>"), "Fragmented paragraph or missing inline formatting");
         check(html.contains("<h3>") && html.contains("<blockquote>") && html.contains("3. A numbered step"), "Lost block formatting");
         check(html.contains("<pre>  if (offline)"), "Lost code indentation");
@@ -47,22 +47,22 @@ public final class ReaderHostTest {
                 .put(new JSONObject().put("text", "<img src=x onerror=alert(1)>").put("bold", true).put("url", "javascript:alert(1)"))
                 .put(new JSONObject().put("text", "private").put("url", "https://name:secret@example.org/"))))
             .put(new JSONObject().put("kind", "image").put("data", "https://example.org/tracking.png").put("text", "\" onerror=alert(1)")));
-        String safe = ReaderDocument.html(hostile);
+        String safe = ReaderDocument.html(hostile, false, name -> null);
         check(!safe.contains("<script>") && !safe.contains("javascript:") && !safe.contains("src=\"https://"), "Active content survived");
         check(!safe.contains("href=\"https://name:"), "Credential link survived");
         check(safe.contains("&lt;img") && safe.contains("Content-Security-Policy"), "Missing escaping or CSP");
         pass("Hostile rich-text runs and remote image sources stay inert");
 
         String legacy = ReaderDocument.html(new JSONObject().put("blocks", new JSONArray()
-            .put(new JSONObject().put("kind", "text").put("text", "Legacy paragraph"))));
+            .put(new JSONObject().put("kind", "text").put("text", "Legacy paragraph"))), false, name -> null);
         check(legacy.contains("<p>Legacy paragraph</p>"), "Broke an older saved document");
         pass("Older plain-text saves remain readable without rewriting their content");
         check(html.contains("<details><summary>example.org") && html.contains("class='print-info'") && html.contains("Paragraph 11"), "Lost metadata or final paragraph");
-        String partial = ReaderDocument.html(new JSONObject().put("warning", "Partial capture: incomplete. 1 image(s) could not be saved"));
+        String partial = ReaderDocument.html(new JSONObject().put("warning", "Partial capture: incomplete. 1 image(s) could not be saved"), false, name -> null);
         check(partial.contains("Partial capture · check captured posts · missing images"), "Important warning was hidden");
         pass("Compact metadata preserves export details and prominent partial/missing-image summaries");
 
-        String night = ReaderDocument.html(doc, true);
+        String night = ReaderDocument.html(doc, true, name -> null);
         check(!html.contains("@media screen{body{color:#eee") && night.contains("@media screen{body{color:#eee;background:#000}"), "Dark reading colors not applied on screen only");
         check(night.contains("@media print{"), "Dark mode removed print styles");
         pass("Dark reading colors apply on screen while print and export stay light");
@@ -70,6 +70,24 @@ public final class ReaderHostTest {
         check(ReaderDocument.xHost("x.com") && ReaderDocument.xHost("mobile.twitter.com") && !ReaderDocument.xHost("example.com")
             && !ReaderDocument.xHost("notx.com") && !ReaderDocument.xHost(null), "Misclassified an X host");
         pass("Only X hosts receive X-specific capture tips");
+
+        JSONObject pictured = new JSONObject().put("blocks", new JSONArray()
+            .put(new JSONObject().put("kind", "image").put("file", "0.jpg").put("text", "A chart"))
+            .put(new JSONObject().put("kind", "image").put("file", "../library/other.json").put("text", "Escape"))
+            .put(new JSONObject().put("kind", "image").put("file", "https://example.org/t.png").put("text", "Remote")));
+        String shown = ReaderDocument.html(pictured, false, name -> "images/" + name);
+        check(shown.contains("<figure><img src=\"images/0.jpg\" alt=\"A chart\"><figcaption>A chart</figcaption></figure>"), "Stored image not shown");
+        check(!shown.contains("../library") && !shown.contains("src=\"images/https")
+            && shown.contains("[Image unavailable offline: Escape]") && shown.contains("[Image unavailable offline: Remote]"), "Unsafe image name was used");
+        pass("Stored images render by name and unsafe names fall back to placeholders");
+
+        check(ReaderDocument.sameHost("https://example.org/post", "https://EXAMPLE.org/i.png")
+            && !ReaderDocument.sameHost("https://attacker.example/post", "https://example.org/i.png")
+            && !ReaderDocument.sameHost("https://example.org/post", "not a url"), "Wrong cookie host decision");
+        check("jpg".equals(ReaderDocument.imageExtension("image/jpg")) && "jpg".equals(ReaderDocument.imageExtension("image/jpeg; charset=binary"))
+            && "webp".equals(ReaderDocument.imageExtension("IMAGE/WEBP")) && ReaderDocument.imageExtension("image/svg+xml") == null
+            && ReaderDocument.imageExtension(null) == null, "Wrong image type decision");
+        pass("Image cookies stay on the page's host and only raster image types are kept");
 
         Path root = Files.createTempDirectory("xave-host-test-");
         try {
@@ -103,12 +121,26 @@ public final class ReaderHostTest {
             check(failed && java.util.Arrays.equals(before, Files.readAllBytes(saved.toPath())), "Failed write damaged the previous copy");
             check(library.listFiles((d,n) -> n.endsWith(".tmp")).length == 0, "Failed write left a temporary file");
             pass("Failed atomic replacement preserves the previous copy and removes temporary output");
+
+            File pictureDraft = new File(drafts, "pictured.json"); DocumentFiles.writeAtomic(pictureDraft, doc.toString());
+            File stored = new File(DocumentFiles.images(pictureDraft), "0.png");
+            stored.getParentFile().mkdirs(); Files.write(stored.toPath(), new byte[]{(byte)0x89, 'P', 'N', 'G'});
+            File pictureSaved = DocumentFiles.save(pictureDraft, library, doc);
+            File kept = new File(DocumentFiles.images(pictureSaved), "0.png");
+            check(Files.readAllBytes(kept.toPath()).length == 4, "Saving lost the draft's images");
+            check("data:image/png;base64,iVBORw==".equals(DocumentFiles.dataUrl(kept)), "Export could not embed a stored image");
+            DocumentFiles.writeAtomic(pictureDraft, doc.toString()); DocumentFiles.delete(pictureDraft);
+            check(kept.isFile(), "Discarding a stale draft removed images its saved article uses");
+            DocumentFiles.delete(pictureSaved);
+            check(!pictureSaved.exists() && !new File(pictureSaved + ".meta").exists() && !kept.exists()
+                && !DocumentFiles.images(pictureSaved).exists(), "Deleting an article left its files behind");
+            pass("Images follow a draft into the library, embed in exports, and leave with the last copy");
         } finally {
             try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
                 for (Path path : (Iterable<Path>)paths.sorted(java.util.Comparator.reverseOrder())::iterator) Files.delete(path);
             }
         }
         Files.write(new File(args[0]).toPath(), html.getBytes(StandardCharsets.UTF_8));
-        System.out.println(passed + "/10 host checks passed");
+        System.out.println(passed + "/13 host checks passed");
     }
 }
