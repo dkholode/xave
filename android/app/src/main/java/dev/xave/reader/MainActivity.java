@@ -69,6 +69,8 @@ public class MainActivity extends Activity {
     private final ExecutorService captures = Executors.newSingleThreadExecutor();
     private boolean pageFailed;
     private boolean foreground;
+    // Orphaned images come only from a process that died mid-capture, so one check per process is enough.
+    private static boolean orphansChecked;
     private volatile int generation;
     private boolean busy;
     private int zoom;
@@ -86,7 +88,11 @@ public class MainActivity extends Activity {
         try (InputStream in = getAssets().open("capture.js")) {
             collector = new String(readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
         } catch (Exception e) { error("Cannot load capture tools."); return; }
-        io.execute(() -> { try { DocumentFiles.removeOrphanImages(getFilesDir()); } catch (Exception ignored) { } });
+        if (!orphansChecked) {
+            orphansChecked = true;
+            // Queued ahead of this screen's captures, and later screens never sweep, so no capture in flight is touched.
+            captures.execute(() -> { try { DocumentFiles.removeOrphanImages(getFilesDir()); } catch (Exception ignored) { } });
+        }
         showLibrary();
         if (state == null) handleIntent(getIntent());
         else {
