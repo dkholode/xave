@@ -9,6 +9,10 @@ final class ReaderDocument {
         return title == null || title.trim().isEmpty() || title.trim().matches("(?i)(conversation|post|article|home|x|twitter)(\\s*[/|]\\s*(x|twitter))?");
     }
 
+    static boolean xHost(String host) {
+        return host != null && host.matches("(?i)(.*\\.)?(x|twitter)\\.com");
+    }
+
     static String savedTitle(JSONObject document) {
         String title = document.optString("title").trim();
         if (!genericTitle(title)) {
@@ -16,7 +20,7 @@ final class ReaderDocument {
         } else {
             try {
                 String host = (new URI(document.optString("source"))).getHost();
-                if (host == null || !host.matches("(?i)(.*\\.)?(x|twitter)\\.com")) {
+                if (!xHost(host)) {
                     return title.isEmpty() ? "Saved article" : title;
                 }
             } catch (Exception ignored) {
@@ -92,7 +96,12 @@ final class ReaderDocument {
     }
 
     static String html(JSONObject document) {
-        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\"><title>" + escape(document.optString("title")) + "</title><style>body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}h1{font-size:1.25em;line-height:1.25;margin:0 0 12px}h2{font-size:1.15em}h3,h4,h5,h6{font-size:1.05em}p{white-space:pre-wrap;margin:.8em 0}h2,h3,h4,h5,h6{break-after:avoid}img{max-width:100%;height:auto}pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}header,details,figcaption{font:15px/1.5 sans-serif}details{margin:8px 0}summary{padding:6px 0;cursor:pointer}.warning{border-left:3px solid;padding-left:10px}.list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}a{color:#000;text-decoration:underline}hr{border:0;border-top:1px solid #000;margin:24px 0}figure{margin:16px 0}.print-info{display:none}@media print{details{display:none}.print-info{display:block;font:11px/1.4 sans-serif}}</style></head><body><h1>" + escape(document.optString("title")) + "</h1>");
+        return html(document, false);
+    }
+
+    /** Dark colors apply on screen only, so printing and PDF export stay black on white. */
+    static String html(JSONObject document, boolean dark) {
+        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\"><title>" + escape(document.optString("title")) + "</title><style>body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}h1{font-size:1.25em;line-height:1.25;margin:0 0 12px}h2{font-size:1.15em}h3,h4,h5,h6{font-size:1.05em}p{white-space:pre-wrap;margin:.8em 0}h2,h3,h4,h5,h6{break-after:avoid}img{max-width:100%;height:auto}pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}header,details,figcaption{font:15px/1.5 sans-serif}details{margin:8px 0}summary{padding:6px 0;cursor:pointer}.warning{border-left:3px solid;padding-left:10px}.list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}a{color:#000;text-decoration:underline}hr{border:0;border-top:1px solid #000;margin:24px 0}figure{margin:16px 0}.print-info{display:none}@media print{details{display:none}.print-info{display:block;font:11px/1.4 sans-serif}}" + (dark ? "@media screen{body{color:#eee;background:#000}a{color:#eee}hr{border-top-color:#eee}}" : "") + "</style></head><body><h1>" + escape(document.optString("title")) + "</h1>");
         String source = document.optString("source");
         String host = "Article";
 

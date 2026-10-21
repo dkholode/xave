@@ -1,9 +1,0 @@
-fastapi
-uvicorn[standard]
-httpx
-playwright
-jinja2
-pydantic>=2
-python-dotenv
-beautifulsoup4
-python-multipart

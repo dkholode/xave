@@ -3,6 +3,7 @@ package dev.xave.reader;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -58,8 +59,14 @@ public class MainActivity extends Activity {
     private boolean busy;
     private int zoom;
     private String pendingExportFile;
+    private boolean dark;
+    private TextView tip;
 
     @Override public void onCreate(Bundle state) {
+        String theme = getPreferences(0).getString("theme", "system");
+        dark = "dark".equals(theme) || "system".equals(theme)
+            && (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        if (dark) setTheme(R.style.AppTheme_Dark);
         super.onCreate(state);
         zoom = getPreferences(0).getInt("zoom", 100);
         try (InputStream in = getAssets().open("capture.js")) {
@@ -109,6 +116,8 @@ public class MainActivity extends Activity {
     }
 
     private int dp(int value) { return (int)(value * getResources().getDisplayMetrics().density); }
+    private int fg() { return dark ? 0xFFEEEEEE : Color.BLACK; }
+    private int bg() { return dark ? Color.BLACK : Color.WHITE; }
 
     private void layout(String nextMode) {
         rememberPosition();
@@ -123,20 +132,26 @@ public class MainActivity extends Activity {
         screen = new LinearLayout(this);
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setPadding(dp(10), dp(8), dp(10), 0);
-        screen.setBackgroundColor(Color.WHITE);
+        // Android 15 draws apps edge to edge, so keep content clear of system bars and the keyboard.
+        screen.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.setPadding(dp(10) + insets.getSystemWindowInsetLeft(), dp(8) + insets.getSystemWindowInsetTop(),
+                dp(10) + insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+            return insets;
+        });
+        screen.setBackgroundColor(bg());
         setContentView(screen);
     }
 
     private TextView label(String text, int size) {
         TextView view = new TextView(this);
-        view.setText(text); view.setTextSize(size); view.setTextColor(Color.BLACK);
+        view.setText(text); view.setTextSize(size); view.setTextColor(fg());
         view.setPadding(dp(4), dp(7), dp(4), dp(7));
         return view;
     }
 
     private Button button(String text, Runnable action) {
         Button b = new Button(this);
-        b.setText(text); b.setTextColor(Color.BLACK); b.setAllCaps(false);
+        b.setText(text); b.setTextColor(fg()); b.setAllCaps(false);
         b.setMinHeight(dp(48)); b.setOnClickListener(v -> action.run());
         return b;
     }
@@ -155,10 +170,12 @@ public class MainActivity extends Activity {
         layout("library"); document = null; currentFile = null; currentDraft = null;
         screen.addView(label("Xave · Offline library", 25));
         EditText url = new EditText(this);
-        url.setTextSize(18); url.setSingleLine(true); url.setHint("Paste a blog post or X link");
+        url.setTextSize(18); url.setSingleLine(true); url.setHint("Paste a web link");
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         screen.addView(url);
-        screen.addView(button("Open link", () -> openOnline(url.getText().toString())));
+        LinearLayout actions = row();
+        add(actions, button("Open link", () -> openOnline(url.getText().toString())));
+        add(actions, button("Theme", this::chooseTheme));
         screen.addView(label("Or share a link from another app to Xave. Internet is needed only to capture new items.", 16));
         File[] files = library().listFiles((dir,name) -> name.endsWith(".json"));
         int count = files == null ? 0 : files.length;
@@ -279,8 +296,9 @@ public class MainActivity extends Activity {
         Button capture = button("Preview capture", this::capture);
         add(top, capture);
         status = label("Loading…", 15); screen.addView(status);
-        screen.addView(label("X: sign in here if needed, expand long posts, and scroll to load the thread. Then preview and check the captured posts.", 15));
+        tip = label(tipFor(Uri.parse(url).getHost()), 15); screen.addView(tip);
         browser = resumed == null ? new WebView(this) : resumed;
+        browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false); s.setAllowContentAccess(false);
@@ -298,6 +316,7 @@ public class MainActivity extends Activity {
             @Override public void onPageFinished(WebView view, String loaded) {
                 if (!"online".equals(mode) || view != browser) return;
                 status.setText("Ready · " + Uri.parse(loaded).getHost());
+                tip.setText(tipFor(Uri.parse(loaded).getHost()));
                 view.evaluateJavascript(collector, null);
                 CookieManager.getInstance().flush();
             }
@@ -406,6 +425,7 @@ public class MainActivity extends Activity {
         add(top, button(file == null ? "Save offline" : "Export", file == null ? this::saveDocument : this::exportDocument));
         add(top, button("More", this::readerOptions));
         browser = new WebView(this);
+        browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(false); s.setAllowFileAccess(false); s.setAllowContentAccess(false);
         s.setBlockNetworkLoads(true); s.setTextZoom(zoom);
@@ -442,7 +462,7 @@ public class MainActivity extends Activity {
         readingProgress = label("0%", 14); readingProgress.setPadding(0,0,0,0); info.addView(readingProgress);
         footer.addView(info, new LinearLayout.LayoutParams(0, dp(52), 1));
         add(footer, button("Next", () -> browser.pageDown(false)));
-        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc), "text/html", "UTF-8", null);
+        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark), "text/html", "UTF-8", null);
     }
 
     private void updateReadingProgress() {
@@ -455,30 +475,56 @@ public class MainActivity extends Activity {
     private void readerOptions() {
         boolean draft = currentDraft != null;
         new AlertDialog.Builder(this).setTitle("Reading options")
-            .setItems(draft ? new String[]{"Text size", "Back to source", "Discard draft"}
-                : new String[]{"Text size", "Open source online"}, (dialog,which) -> {
+            .setItems(new String[]{"Text size", "Theme", draft ? "Back to source" : "Open source online",
+                draft ? "Discard draft" : "Delete from library"}, (dialog,which) -> {
                 if (which == 0) {
                     LinearLayout sizes = new LinearLayout(this);
                     sizes.addView(button("A−", () -> changeZoom(-10)), new LinearLayout.LayoutParams(0,dp(52),1));
                     sizes.addView(button("A+", () -> changeZoom(10)), new LinearLayout.LayoutParams(0,dp(52),1));
                     new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
-                } else if (which == 1) openOnline(document.optString("source"));
-                else discardDraft();
+                } else if (which == 1) chooseTheme();
+                else if (which == 2) openOnline(document.optString("source"));
+                else deleteCurrent();
             }).show();
     }
 
-    private void discardDraft() {
-        File draft = currentDraft;
-        if (draft == null || busy) return;
-        new AlertDialog.Builder(this).setMessage("Discard this unfinished capture?").setNegativeButton("Keep", null)
-            .setPositiveButton("Discard", (dialog,which) -> {
+    private void chooseTheme() {
+        String[] values = {"system", "light", "dark"};
+        int checked = Arrays.asList(values).indexOf(getPreferences(0).getString("theme", "system"));
+        new AlertDialog.Builder(this).setTitle("Theme")
+            .setSingleChoiceItems(new String[]{"Follow system", "Light (best for e-ink)", "Dark"}, checked, (dialog,which) -> {
+                dialog.dismiss();
+                if (which == checked) return;
+                getPreferences(0).edit().putString("theme", values[which]).apply();
+                recreate();
+            }).show();
+    }
+
+    private String tipFor(String host) {
+        return ReaderDocument.xHost(host)
+            ? "X: sign in here if needed, expand long posts, and scroll to load the thread. Then preview and check the captured posts."
+            : "Sign in if the site requires it and scroll to load everything you want to keep. Then preview the capture.";
+    }
+
+    private void deleteCurrent() {
+        boolean draft = currentDraft != null;
+        File target = draft ? currentDraft : currentFile;
+        if (target == null || busy) return;
+        new AlertDialog.Builder(this).setMessage(draft ? "Discard this unfinished capture?" : "Delete this article from your library? This cannot be undone.")
+            .setNegativeButton("Keep", null)
+            .setPositiveButton(draft ? "Discard" : "Delete", (dialog,which) -> {
                 busy = true; int token = generation;
                 io.execute(() -> {
                     try {
-                        Files.deleteIfExists(draft.toPath());
-                        Files.deleteIfExists(new File(draft + ".meta").toPath());
-                        runOnUiThread(() -> { if (token == generation) showLibrary(); });
-                    } catch (Exception e) { runOnUiThread(() -> { if (token == generation) { busy = false; error("Could not discard this draft."); } }); }
+                        Files.deleteIfExists(target.toPath());
+                        Files.deleteIfExists(new File(target + ".meta").toPath());
+                        Files.deleteIfExists(new File(target + ".title-backup").toPath());
+                        runOnUiThread(() -> { if (token == generation) {
+                            showLibrary();
+                            // Cleared after leaving the reader, which records the position on exit.
+                            getPreferences(0).edit().remove("position:" + target.getName()).apply();
+                        } });
+                    } catch (Exception e) { runOnUiThread(() -> { if (token == generation) { busy = false; error(draft ? "Could not discard this draft." : "Could not delete this article."); } }); }
                 });
             }).show();
     }

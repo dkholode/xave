@@ -1,8 +1,7 @@
-# Xave for Android
+# Building Xave
 
-Capture a blog post or X page in the built-in browser, preview it, and save it
-for offline reading. The reader runs on the device and does not need the Python
-app. It supports Android 8 or later and is designed for the Boox Palma 2.
+How to build, install, and test the Android app. For what the app does and how
+to use it, see the [main README](../README.md).
 
 ## Build and install
 
@@ -34,33 +33,6 @@ already exists, Gradle uses it so updates can retain an existing installation.
 Keep that key private. Installing a build signed with a different key requires
 uninstalling the previous app, which removes its saved library.
 
-## Read offline
-
-1. Paste an HTTPS blog-post or X link, or use another app's Share action to send
-   a link to Xave.
-2. Let the page load. Sign in to X in the built-in browser if required. Expand
-   truncated posts and scroll to load the content you want to save.
-3. Tap **Preview capture** and review the text, post count, and warnings.
-4. Tap **Save offline**. Reopen saved items from **Library**. Unfinished previews
-   are kept under **Unfinished captures**.
-5. Use **More** for text size and **Prev / Next** to move through the article.
-   Reading position is saved. **Export** saves a self-contained HTML file or
-   opens Android's Print / Save as PDF dialog, if a print service is installed.
-
-The library and browser sessions stay on the device. Uninstalling the app or
-clearing its data deletes them. Export important articles for a separate copy.
-
-## Capture limits
-
-- X threads contain loaded posts by the linked post's author. Xave does not
-  verify reply relationships or guarantee a complete thread. Review the preview.
-- Open the full reading view before capturing an X Article. Blog extraction and
-  unusual page layouts may be incomplete.
-- Loaded images are saved within size and time limits. Missing images are
-  marked. Video, audio, and interactive widgets are not downloaded.
-- Capturing requires internet access. Saved reading blocks scripts and network
-  loads. Opening source links takes you back online.
-
 ## Tests
 
 For renderer and storage checks, install Python 3 and Android Studio, then run:
@@ -70,8 +42,10 @@ python3 tests/run_host_tests.py
 ```
 
 The script uses Android Studio's bundled JDK and JSON library on macOS. On other
-systems, set `JAVA_HOME` and `XAVE_JSON_JAR` to a JDK and a JAR containing
-`org.json`.
+systems, set `JAVA_HOME` to a JDK and `XAVE_JSON_JAR` to a JAR containing
+`org.json`, such as
+[json-20240303.jar](https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar)
+from Maven Central.
 
 For capture checks:
 
@@ -79,4 +53,7 @@ For capture checks:
 python3 tests/build_test_page.py
 ```
 
-Open `app/build/capture-tests.html` in a browser to see the results.
+Open `app/build/capture-tests.html` in a browser to see the results. CI runs the
+same page in headless Chrome.
+
+For release builds, see [RELEASING.md](../RELEASING.md).

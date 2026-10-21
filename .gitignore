@@ -1,27 +1,5 @@
-.venv/
 __pycache__/
 *.pyc
-.pytest_cache/
-
-# Secrets / session
-.env
-storage_state.json
-
-# Generated output
-*.pdf
-data/
-artifacts/
-pilot-artifacts/
-tmp/
-
-# Internal planning notes and handoff docs (kept locally, never published)
-/BUSINESS_PLAN.md
-/CUSTOMER_TERMS_DRAFT.md
-/MANUAL_LAUNCH_TODO.md
-/P0_P1_IMPLEMENTATION_AUDIT.md
-/REVENUE_FEATURE_TODO.md
-/claude.md
-/docs/
 
 # Android local tools and generated builds
 android/.gradle/
@@ -32,4 +10,3 @@ android/.idea/
 *.iml
 *.keystore
 *.jks
-/android/DEVICE_VERIFICATION.md
