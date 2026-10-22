@@ -194,11 +194,11 @@ final class ReaderDocument {
     }
 
     /** Dark colors apply on screen only, so printing and PDF export stay black on white. */
-    static String html(JSONObject document, boolean dark, boolean preview, Function<String, String> image) {
-        return html(document, dark, preview, false, image);
+    static String html(JSONObject document, boolean dark, boolean justCaptured, Function<String, String> image) {
+        return html(document, dark, justCaptured, false, image);
     }
 
-    private static String html(JSONObject document, boolean dark, boolean preview, boolean export, Function<String, String> image) {
+    private static String html(JSONObject document, boolean dark, boolean justCaptured, boolean export, Function<String, String> image) {
         String title = document.optString("title");
         Matcher thread = THREAD_TITLE.matcher(title);
         boolean isThread = thread.matches();
@@ -222,7 +222,7 @@ final class ReaderDocument {
         }
         if (!byline.isEmpty()) html.append("<p class='byline'>").append(byline).append("</p>");
 
-        if (preview) {
+        if (justCaptured) {
             String notice = isThread
                 ? "It has " + thread.group(2) + (thread.group(2).equals("1") ? " loaded post" : " loaded posts") + " by @" + thread.group(1) + ". Posts you didn't scroll to and replies from others are not included."
                 : "Compare it with the original. Video and anything that hadn't loaded are not saved.";

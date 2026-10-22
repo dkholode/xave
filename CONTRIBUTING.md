@@ -8,7 +8,7 @@ are all welcome.
 Most issues are pages that capture badly. Please include:
 
 - The URL, if it is public
-- What was missing or wrong in the preview
+- What was missing or wrong in the capture
 - Your device and Android version
 
 Don't include links or screenshots that show private content or account

@@ -16,6 +16,9 @@ public final class ReaderHostTest {
         if (!condition) throw new AssertionError(message);
     }
     private static void pass(String message) { passed++; System.out.println("PASS · " + message); }
+    private static JSONObject read(File file) throws Exception {
+        return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    }
     private static JSONObject sample() throws Exception {
         JSONArray runs = new JSONArray()
             .put(new JSONObject().put("text", "Read "))
@@ -88,10 +91,10 @@ public final class ReaderHostTest {
         check(reading.contains("<p class='note'>Quoted post — see original</p>") && !reading.contains("[Quoted post"), "Placeholder still reads as body text");
         pass("Quoted-post and media placeholders render as notes, not bracketed text");
 
-        String preview = ReaderDocument.html(thread(), false, true, name -> null);
-        check(preview.contains("Check this capture.") && preview.contains("2 loaded posts by @alice") && preview.contains("1 image could not be saved"), "Preview hides what the capture contains");
-        check(!reading.contains("Check this capture.") && !reading.contains("Partial capture"), "Saved copy still carries the capture warning");
-        pass("The capture notice appears while previewing and not on saved copies");
+        String captured = ReaderDocument.html(thread(), false, true, name -> null);
+        check(captured.contains("Check this capture.") && captured.contains("2 loaded posts by @alice") && captured.contains("1 image could not be saved"), "Fresh capture hides what it contains");
+        check(!reading.contains("Check this capture.") && !reading.contains("Partial capture"), "Reopened copy still carries the capture warning");
+        pass("The capture notice appears right after capturing and not when the item is reopened");
 
         String exported = ReaderDocument.html(thread(), name -> null);
         check(exported.contains("Saved Oct 21, 2026 8:40 PM") && exported.contains("https://x.com/alice/status/1"), "Export lost the save date or source");
@@ -132,64 +135,44 @@ public final class ReaderHostTest {
 
         Path root = Files.createTempDirectory("xave-host-test-");
         try {
-            File drafts = Files.createDirectory(root.resolve("drafts")).toFile();
             File library = Files.createDirectory(root.resolve("library")).toFile();
-            File draft = new File(drafts, "sample.json");
-            DocumentFiles.writeAtomic(draft, doc.toString()); DocumentFiles.writeSummary(draft, doc);
-            check(DocumentFiles.read(draft).toString().contains("Paragraph 11"), "Draft did not survive a fresh read");
-            File saved = DocumentFiles.save(draft, library, DocumentFiles.read(draft));
-            check(saved.isFile() && !draft.exists() && !new File(draft + ".meta").exists(), "Promotion lost data or left active draft");
-            DocumentFiles.save(draft, library, doc); // Retry after promotion, with stale in-memory state.
-            check(library.listFiles((d,n) -> n.endsWith(".json")).length == 1, "Retry duplicated the article");
-            pass("Drafts persist on disk and save retries retain one complete article");
-
-            File retry = new File(drafts, "retry.json"); DocumentFiles.writeAtomic(retry, doc.toString());
-            byte[] original = Files.readAllBytes(retry.toPath());
-            File unavailable = root.resolve("not-a-directory").toFile(); Files.write(unavailable.toPath(), new byte[]{1});
-            boolean failed = false;
-            try { DocumentFiles.save(retry, unavailable, doc); } catch (Exception expected) { failed = true; }
-            check(failed && java.util.Arrays.equals(original, Files.readAllBytes(retry.toPath())), "Failed save destroyed its draft");
-            pass("A failed save keeps the draft bytes available for retry");
-
+            File saved = new File(library, "sample.json");
+            DocumentFiles.writeAtomic(saved, doc.toString()); DocumentFiles.writeSummary(saved, doc);
             File meta = new File(saved + ".meta"); Files.write(meta.toPath(), "{broken".getBytes(StandardCharsets.UTF_8));
-            DocumentFiles.writeSummary(saved, DocumentFiles.read(saved));
-            check(DocumentFiles.read(meta).getString("title").equals(doc.getString("title")), "Metadata could not be rebuilt");
-            check(DocumentFiles.read(saved).getJSONArray("blocks").length() == doc.getJSONArray("blocks").length(), "Metadata repair changed article content");
+            DocumentFiles.writeSummary(saved, read(saved));
+            check(read(meta).getString("title").equals(doc.getString("title")), "Metadata could not be rebuilt");
+            check(read(saved).getJSONArray("blocks").length() == doc.getJSONArray("blocks").length(), "Metadata repair changed article content");
             pass("Metadata can be rebuilt from an intact article without altering content");
 
-            byte[] before = Files.readAllBytes(saved.toPath()); failed = false;
+            byte[] before = Files.readAllBytes(saved.toPath()); boolean failed = false;
             try { DocumentFiles.writeAtomic(saved, null); } catch (Exception expected) { failed = true; }
             check(failed && java.util.Arrays.equals(before, Files.readAllBytes(saved.toPath())), "Failed write damaged the previous copy");
             check(library.listFiles((d,n) -> n.endsWith(".tmp")).length == 0, "Failed write left a temporary file");
             pass("Failed atomic replacement preserves the previous copy and removes temporary output");
 
-            File pictureDraft = new File(drafts, "pictured.json"); DocumentFiles.writeAtomic(pictureDraft, doc.toString());
-            File stored = new File(DocumentFiles.images(pictureDraft), "0.png");
+            File article = new File(library, "pictured.json");
+            File stored = new File(DocumentFiles.images(article), "0.png");
             stored.getParentFile().mkdirs(); Files.write(stored.toPath(), new byte[]{(byte)0x89, 'P', 'N', 'G'});
-            File pictureSaved = DocumentFiles.save(pictureDraft, library, doc);
-            File kept = new File(DocumentFiles.images(pictureSaved), "0.png");
-            check(Files.readAllBytes(kept.toPath()).length == 4, "Saving lost the draft's images");
-            check("data:image/png;base64,iVBORw==".equals(DocumentFiles.dataUrl(kept)), "Export could not embed a stored image");
-            DocumentFiles.writeAtomic(pictureDraft, doc.toString()); DocumentFiles.delete(pictureDraft);
-            check(kept.isFile(), "Discarding a stale draft removed images its saved article uses");
-            DocumentFiles.delete(pictureSaved);
-            check(!pictureSaved.exists() && !new File(pictureSaved + ".meta").exists() && !kept.exists()
-                && !DocumentFiles.images(pictureSaved).exists(), "Deleting an article left its files behind");
-            pass("Images follow a draft into the library, embed in exports, and leave with the last copy");
+            DocumentFiles.writeAtomic(article, doc.toString()); DocumentFiles.writeSummary(article, doc);
+            check("data:image/png;base64,iVBORw==".equals(DocumentFiles.dataUrl(stored)), "Export could not embed a stored image");
+            DocumentFiles.delete(article);
+            check(!article.exists() && !new File(article + ".meta").exists() && !stored.exists()
+                && !DocumentFiles.images(article).exists(), "Deleting an article left its files behind");
+            pass("Stored images embed in exports and leave with their article");
 
-            File live = new File(drafts, "live.json"); DocumentFiles.writeAtomic(live, doc.toString());
+            File live = new File(library, "live.json"); DocumentFiles.writeAtomic(live, doc.toString());
             File liveImage = new File(DocumentFiles.images(live), "0.png");
-            File lostImage = new File(DocumentFiles.images(new File(drafts, "interrupted.json")), "0.png");
+            File lostImage = new File(DocumentFiles.images(new File(library, "interrupted.json")), "0.png");
             for (File image : new File[]{liveImage, lostImage}) { image.getParentFile().mkdirs(); Files.write(image.toPath(), new byte[]{1}); }
             DocumentFiles.removeOrphanImages(root.toFile());
             check(liveImage.isFile() && !lostImage.getParentFile().exists(), "Wrong images removed after an interrupted capture");
-            pass("Images left by an interrupted capture are removed while a draft's images stay");
+            pass("Images left by an interrupted capture are removed while a saved article's images stay");
         } finally {
             try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
                 for (Path path : (Iterable<Path>)paths.sorted(java.util.Comparator.reverseOrder())::iterator) Files.delete(path);
             }
         }
         Files.write(new File(args[0]).toPath(), html.getBytes(StandardCharsets.UTF_8));
-        System.out.println(passed + "/18 host checks passed");
+        System.out.println(passed + "/16 host checks passed");
     }
 }
