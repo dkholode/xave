@@ -32,7 +32,7 @@ see [android/README.md](android/README.md).
    and delete. **Prev / Next** page through it, and your position is saved.
    **Export** saves a self-contained HTML file or opens Android's
    Print / Save as PDF dialog, if a print service is installed.
-6. To delete several items at once, use **⋮ > Delete multiple** in the library.
+6. To delete one or more items from the library, use **⋮ > Delete** there.
 
 **Theme**, in the **⋮** menu, follows your system's dark mode by default. Choose
 **Light** on e-ink screens for the sharpest text.

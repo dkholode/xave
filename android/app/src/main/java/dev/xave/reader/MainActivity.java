@@ -244,7 +244,7 @@ public class MainActivity extends Activity {
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(icon("⋮", v -> popup(v, new String[]{"Delete multiple", "Theme"}, which -> {
+        top.addView(icon("⋮", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
             if (which == 0) showSelection(); else chooseTheme();
         })));
         LinearLayout field = bar();
