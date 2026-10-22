@@ -36,7 +36,6 @@ public final class ReaderHostTest {
             .put("text", "Paragraph " + i + ". The reader keeps the article in focus. Metadata and capture notes can be expanded when needed."));
         return new JSONObject().put("title", "A calmer offline reading experience")
             .put("source", "https://example.org/a-readable-article").put("savedAt", "Oct 21, 2026")
-            .put("warning", "Page capture: check the preview against the original. Only loaded text and images are saved.")
             .put("blocks", blocks);
     }
     private static JSONObject text(String text) throws Exception { return new JSONObject().put("kind", "text").put("text", text); }
@@ -51,14 +50,13 @@ public final class ReaderHostTest {
             .put(text("[Quoted post — see original]"))
             .put(link("6:21 PM · Oct 7, 2026", "https://x.com/alice/status/2"));
         return new JSONObject().put("title", "@alice · 2 posts").put("source", "https://x.com/alice/status/1")
-            .put("savedAt", "Oct 21, 2026 8:40 PM").put("blocks", blocks)
-            .put("warning", "Partial capture: loaded posts by @alice only. 1 image(s) could not be saved; placeholders appear below.");
+            .put("savedAt", "Oct 21, 2026 8:40 PM").put("blocks", blocks);
     }
     public static void main(String[] args) throws Exception {
         Locale.setDefault(Locale.US);
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
         JSONObject doc = sample();
-        String html = ReaderDocument.html(doc, false, false, name -> null);
+        String html = ReaderDocument.html(doc, false, name -> null);
         check(html.contains("Read <strong>this important</strong> sentence with <a href=\"https://example.org/reference?x=1&amp;y=2\">a reference</a> here.</p>"), "Fragmented paragraph or missing inline formatting");
         check(html.contains("<h3>") && html.contains("<blockquote>") && html.contains("3. A numbered step"), "Lost block formatting");
         check(html.contains("<pre>  if (offline)"), "Lost code indentation");
@@ -69,19 +67,19 @@ public final class ReaderHostTest {
                 .put(new JSONObject().put("text", "<img src=x onerror=alert(1)>").put("bold", true).put("url", "javascript:alert(1)"))
                 .put(new JSONObject().put("text", "private").put("url", "https://name:secret@example.org/"))))
             .put(new JSONObject().put("kind", "image").put("data", "https://example.org/tracking.png").put("text", "\" onerror=alert(1)")));
-        String safe = ReaderDocument.html(hostile, false, false, name -> null);
+        String safe = ReaderDocument.html(hostile, false, name -> null);
         check(!safe.contains("<script>") && !safe.contains("javascript:") && !safe.contains("src=\"https://"), "Active content survived");
         check(!safe.contains("href=\"https://name:"), "Credential link survived");
         check(safe.contains("&lt;img") && safe.contains("Content-Security-Policy"), "Missing escaping or CSP");
         pass("Hostile rich-text runs and remote image sources stay inert");
 
         String legacy = ReaderDocument.html(new JSONObject().put("blocks", new JSONArray()
-            .put(new JSONObject().put("kind", "text").put("text", "Legacy paragraph"))), false, false, name -> null);
+            .put(new JSONObject().put("kind", "text").put("text", "Legacy paragraph"))), false, name -> null);
         check(legacy.contains("<p>Legacy paragraph</p>"), "Broke an older saved document");
         pass("Older plain-text saves remain readable without rewriting their content");
         check(html.contains("Paragraph 11"), "Lost the final paragraph");
 
-        String reading = ReaderDocument.html(thread(), false, false, name -> null);
+        String reading = ReaderDocument.html(thread(), false, name -> null);
         check(reading.contains("<h1>@alice</h1>") && reading.contains("Thread · 2 posts"), "Thread header lost its author or post count");
         check(reading.contains("<a href=\"https://x.com/alice/status/1\"><span>1 / 2</span><span>Oct 19, 2026</span></a>")
             && reading.contains("<a href=\"https://x.com/alice/status/2\"><span>2 / 2</span><span>6:21 PM · Oct 7, 2026</span></a>"), "Posts lost their number, date, or link");
@@ -91,10 +89,11 @@ public final class ReaderHostTest {
         check(reading.contains("<p class='note'>Quoted post — see original</p>") && !reading.contains("[Quoted post"), "Placeholder still reads as body text");
         pass("Quoted-post and media placeholders render as notes, not bracketed text");
 
-        String captured = ReaderDocument.html(thread(), false, true, name -> null);
-        check(captured.contains("Check this capture.") && captured.contains("2 loaded posts by @alice") && captured.contains("1 image could not be saved"), "Fresh capture hides what it contains");
-        check(!reading.contains("Check this capture.") && !reading.contains("Partial capture"), "Reopened copy still carries the capture warning");
-        pass("The capture notice appears right after capturing and not when the item is reopened");
+        check(ReaderDocument.savedMessage(thread()).equals("Saved 2 posts by @alice")
+            && ReaderDocument.savedMessage(new JSONObject().put("title", "@bob · 1 post")).equals("Saved 1 post by @bob")
+            && ReaderDocument.savedMessage(new JSONObject().put("title", "Why e-ink finally works").put("source", "https://x.com/bob/status/9")).equals("Saved X Article by @bob")
+            && ReaderDocument.savedMessage(doc).equals("Saved for offline reading"), "Save confirmation misstates what was saved");
+        pass("The save confirmation names the post count and author, or the X Article's author");
 
         String exported = ReaderDocument.html(thread(), name -> null);
         check(exported.contains("Saved Oct 21, 2026 8:40 PM") && exported.contains("https://x.com/alice/status/1"), "Export lost the save date or source");
@@ -106,7 +105,7 @@ public final class ReaderHostTest {
         check(articleRow.getString("title").equals("Why e-ink finally works") && articleRow.getString("detail").equals("@bob · Article"), "Article row lost its title or author: " + articleRow);
         pass("Library rows show the first post or article title, with author and post count");
 
-        String night = ReaderDocument.html(doc, true, false, name -> null);
+        String night = ReaderDocument.html(doc, true, name -> null);
         check(!html.contains("@media screen{body{color:#eee") && night.contains("@media screen{body{color:#eee;background:#000}"), "Dark reading colors not applied on screen only");
         check(night.contains("@media print{"), "Dark mode removed print styles");
         pass("Dark reading colors apply on screen while print and export stay light");
@@ -119,7 +118,7 @@ public final class ReaderHostTest {
             .put(new JSONObject().put("kind", "image").put("file", "0.jpg").put("text", "A chart"))
             .put(new JSONObject().put("kind", "image").put("file", "../library/other.json").put("text", "Escape"))
             .put(new JSONObject().put("kind", "image").put("file", "https://example.org/t.png").put("text", "Remote")));
-        String shown = ReaderDocument.html(pictured, false, false, name -> "images/" + name);
+        String shown = ReaderDocument.html(pictured, false, name -> "images/" + name);
         check(shown.contains("<figure><img src=\"images/0.jpg\" alt=\"A chart\"><figcaption>A chart</figcaption></figure>"), "Stored image not shown");
         check(!shown.contains("../library") && !shown.contains("src=\"images/https")
             && shown.contains("<p class='note'>Image unavailable offline: Escape</p>") && shown.contains("<p class='note'>Image unavailable offline: Remote</p>"), "Unsafe image name was used");

@@ -24,7 +24,7 @@ see [android/README.md](android/README.md).
 2. Let the page load. Sign in if the site requires it, and scroll to load the
    content you want to keep. On X, expand long posts and scroll the thread.
 3. Tap **Capture** once the top bar shows the posts you want as loaded. Xave
-   saves it right away. Check the capture and the note at its top.
+   saves it right away and opens it. Replies from other accounts aren't saved.
 4. If something is missing, press Back to return to the loaded page, scroll
    further, and capture again. Delete the copy you don't need. **‹** returns to
    the library.

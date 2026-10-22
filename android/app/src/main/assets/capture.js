@@ -147,14 +147,12 @@
       // Snowflake IDs sort chronologically without floating-point precision loss.
       const ordered = [...posts.values()].sort((a,b) => a.id.length-b.id.length || a.id.localeCompare(b.id));
       return JSON.stringify({title: '@' + author + ' · ' + ordered.length + (ordered.length === 1 ? ' post' : ' posts'),
-        source, blocks: ordered.flatMap((p,i) => i ? [{kind:'divider'}, ...p.blocks] : p.blocks),
-        warning: 'Partial capture: loaded posts by @' + author + ' only. Full-thread completeness and reply relationships are not verified. Expand long posts and scroll the conversation before capturing. Check the preview for missing or unrelated posts.'});
+        source, blocks: ordered.flatMap((p,i) => i ? [{kind:'divider'}, ...p.blocks] : p.blocks)});
     }
     const result = article();
     if (result.blocks.filter(b => b.kind !== 'image').map(b => b.text || '').join('').length < 100)
       return JSON.stringify({error:'Not enough readable text found. Wait for the article to load or open its full reading view, then try again.'});
-    return JSON.stringify({...result, source,
-      warning: 'Page capture: check the preview against the original. Only loaded text and images are saved; embedded audio/video and content behind login or paywalls are not included.'});
+    return JSON.stringify({...result, source});
   }
   scan();
   const timer = setInterval(scan, 800);

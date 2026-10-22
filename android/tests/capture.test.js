@@ -50,7 +50,7 @@ test('X retains exact snowflake IDs and excludes replies by other authors', () =
   assert(doc.title === '@alice · 2 posts', 'Wrong post count');
   const texts = doc.blocks.filter(b => b.kind === 'text').map(b => b.text);
   assert(texts.join('|') === 'First post|Second post', 'Wrong author or precision/order loss');
-  assert(doc.warning.startsWith('Partial capture:'), 'Missing partial-capture warning'); f.close();
+  f.close();
 });
 test('Loading status reports X Articles, loaded posts, and pages that are not posts', () => {
   const thread = fixture(post('alice', root, 'First post') + post('alice', reply, 'Second post') + post('bob', '20000000000000000003', 'Reply'), `https://x.com/alice/status/${root}`);

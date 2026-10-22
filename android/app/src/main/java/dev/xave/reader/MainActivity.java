@@ -73,8 +73,6 @@ public class MainActivity extends Activity {
     private String mode = "library";
     private JSONObject document;
     private File currentFile;
-    // Set while reading the capture just made, which shows its capture notice and can return to the live page.
-    private boolean justCaptured;
     private WebView sourceBrowser;
     private String sourceUrl;
     private TextView readingProgress;
@@ -115,7 +113,7 @@ public class MainActivity extends Activity {
             pendingExportFile = state.getString("pendingExportFile");
             String savedItem = state.getString("savedItem");
             if (savedItem != null && savedItem.equals(new File(savedItem).getName())
-                    && new File(library(), savedItem).isFile()) openSaved(new File(library(), savedItem), state.getBoolean("justCaptured"));
+                    && new File(library(), savedItem).isFile()) openSaved(new File(library(), savedItem));
             else if (state.getString("onlineUrl") != null) openOnline(state.getString("onlineUrl"));
         }
     }
@@ -123,7 +121,6 @@ public class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle state) {
         rememberPosition();
         if ("reader".equals(mode) && currentFile != null) state.putString("savedItem", currentFile.getName());
-        if ("reader".equals(mode)) state.putBoolean("justCaptured", justCaptured);
         if ("online".equals(mode) && browser != null) state.putString("onlineUrl", browser.getUrl());
         state.putString("pendingExportFile", pendingExportFile);
         super.onSaveInstanceState(state);
@@ -240,7 +237,7 @@ public class MainActivity extends Activity {
 
     private void showLibrary() {
         destroySource();
-        layout("library"); document = null; currentFile = null; justCaptured = false;
+        layout("library"); document = null; currentFile = null;
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
@@ -268,7 +265,7 @@ public class MainActivity extends Activity {
             empty.setTextColor(muted()); empty.setPadding(0, dp(8), 0, dp(8));
             entries.addView(empty);
         }
-        for (File file : files) entry(entries, file).setOnClickListener(v -> openSaved(file, false));
+        for (File file : files) entry(entries, file).setOnClickListener(v -> openSaved(file));
     }
 
     /** A library row: the first post or article title, with the author and post count under it. */
@@ -313,7 +310,7 @@ public class MainActivity extends Activity {
     }
 
     private void showSelection() {
-        layout("delete"); document = null; currentFile = null; justCaptured = false;
+        layout("delete"); document = null; currentFile = null;
         selected.clear();
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
@@ -385,14 +382,14 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void openSaved(File file, boolean captured) {
+    private void openSaved(File file) {
         if (busy) return;
         busy = true;
         int token = generation;
         io.execute(() -> {
             try {
                 JSONObject doc = readSavedDocument(file);
-                runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, file, captured); });
+                runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, file, false); });
             } catch (Exception e) {
                 runOnUiThread(() -> { if (token == generation) { busy = false; error("Could not open this saved item."); } });
             }
@@ -437,14 +434,14 @@ public class MainActivity extends Activity {
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
         else destroySource();
-        layout("online"); document = null; currentFile = null; justCaptured = false;
+        layout("online"); document = null; currentFile = null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
         status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
         top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(pill("Capture", true, this::capture));
-        TextView tip = label("Scroll the thread and expand long posts first.", 14);
+        TextView tip = label("Scroll the thread and expand long posts first. Replies aren't saved.", 14);
         tip.setTextColor(muted()); screen.addView(tip);
         browser = resumed == null ? new WebView(this) : resumed;
         if (foreground) browser.resumeTimers();
@@ -547,7 +544,7 @@ public class MainActivity extends Activity {
                         try { writeSummary(file, doc); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation && !isFinishing()) {
                             showReader(doc, file, true);
-                            Toast.makeText(this, "Saved for offline reading", Toast.LENGTH_LONG).show();
+                            Toast.makeText(this, ReaderDocument.savedMessage(doc), Toast.LENGTH_LONG).show();
                         } });
                     } catch (Exception e) {
                         try { DocumentFiles.delete(file); } catch (Exception ignored) { }
@@ -566,7 +563,6 @@ public class MainActivity extends Activity {
         ArrayList<Integer> pictures = new ArrayList<>();
         for (int i=0; i<blocks.length(); i++) if ("image".equals(blocks.optJSONObject(i).optString("kind"))) pictures.add(i);
         int count = Math.min(40, pictures.size());
-        int missing = pictures.size() - count;
         long deadline = android.os.SystemClock.elapsedRealtime() + 45000;
         AtomicLong total = new AtomicLong();
         AtomicInteger done = new AtomicInteger();
@@ -591,15 +587,13 @@ public class MainActivity extends Activity {
             for (int n=0; n<count; n++) {
                 try {
                     String name = results.get(n).get();
-                    if (name == null) missing++;
-                    else blocks.getJSONObject(pictures.get(n)).put("file", name);
-                } catch (Exception e) { missing++; }
+                    if (name != null) blocks.getJSONObject(pictures.get(n)).put("file", name);
+                } catch (Exception ignored) { }
             }
-        } catch (InterruptedException e) { missing += count; }
+        } catch (InterruptedException ignored) { }
         finally { pool.shutdownNow(); }
         // An inline image is now a file or a placeholder, so its payload need not stay in the article.
         for (int i : pictures) if (blocks.optJSONObject(i).optString("url").startsWith("data:")) blocks.optJSONObject(i).remove("url");
-        if (missing > 0) try { doc.put("warning", doc.optString("warning") + " " + missing + " image(s) could not be saved; placeholders appear below."); } catch (Exception ignored) { }
     }
 
     /** Returns the saved file name, which is the given base name plus the image type's extension. */
@@ -660,7 +654,7 @@ public class MainActivity extends Activity {
                 sourceBrowser.onPause(); browser = null;
             }
         }
-        layout("reader"); document = doc; currentFile = file; justCaptured = captured;
+        layout("reader"); document = doc; currentFile = file;
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
         top.addView(new View(this), new LinearLayout.LayoutParams(0, 0, 1));
@@ -716,7 +710,7 @@ public class MainActivity extends Activity {
         readingProgress.setGravity(Gravity.CENTER);
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
         footer.addView(pill("Next", false, () -> browser.pageDown(false)));
-        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, captured, name -> "images/" + name), "text/html", "UTF-8", null);
+        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
     }
 
     private void updateReadingProgress() {
@@ -852,7 +846,8 @@ public class MainActivity extends Activity {
         if (browser != null) { browser.resumeTimers(); browser.onResume(); }
     }
     @Override public void onBackPressed() {
-        if ("reader".equals(mode) && justCaptured && sourceBrowser != null) openOnline(document.optString("source"));
+        // Only the capture just made keeps its loaded page, so Back from it returns there.
+        if ("reader".equals(mode) && sourceBrowser != null) openOnline(document.optString("source"));
         else if ("online".equals(mode) && browser != null && browser.canGoBack()) browser.goBack();
         else if (!"library".equals(mode)) showLibrary();
         else super.onBackPressed();
