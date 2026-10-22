@@ -33,9 +33,7 @@ final class DocumentFiles {
     }
 
     static void writeSummary(File file, JSONObject document) throws Exception {
-        writeAtomic(new File(file + ".meta"), new JSONObject()
-            .put("title", document.optString("title"))
-            .put("savedAt", document.optString("savedAt")).toString());
+        writeAtomic(new File(file + ".meta"), ReaderDocument.summary(document).toString());
     }
 
     /** A draft and the saved article it becomes share one name, so their images stay in one place. */

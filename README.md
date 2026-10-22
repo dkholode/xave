@@ -23,16 +23,19 @@ see [android/README.md](android/README.md).
 1. Paste an HTTPS link, or use another app's Share action to send a link to Xave.
 2. Let the page load. Sign in if the site requires it, and scroll to load the
    content you want to keep. On X, expand long posts and scroll the thread.
-3. Tap **Preview capture** and check the text, post count, and warnings.
-4. Tap **Save offline**. Reopen saved items from **Library**. Unfinished previews
-   are kept under **Unfinished captures**.
-5. In the reader, use **More** for text size, theme, the original page, or to
-   delete the article. **Prev / Next** page through it, and your position is saved.
+3. Tap **Capture** once the top bar shows the posts you want as loaded. Check
+   the preview and the note at its top.
+4. Tap **Save**, then **‹** to return to the library. Previews you haven't saved
+   stay under **Not saved yet**.
+5. In the reader, the **⋮** menu has text size, theme, export, the post on X,
+   and delete. **Prev / Next** page through it, and your position is saved.
    **Export** saves a self-contained HTML file or opens Android's
    Print / Save as PDF dialog, if a print service is installed.
+6. To save or delete several items at once, use **⋮ > Manage multiple** in the
+   library.
 
-**Theme** follows your system's dark mode by default. Choose **Light** on e-ink
-screens for the sharpest text.
+**Theme**, in the **⋮** menu, follows your system's dark mode by default. Choose
+**Light** on e-ink screens for the sharpest text.
 
 ## Capture limits
 

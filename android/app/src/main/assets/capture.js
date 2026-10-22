@@ -131,10 +131,18 @@
     return {title, blocks};
   }
 
+  const articleView = '[data-testid="twitterArticleReadView"], [data-testid="twitterArticleRichTextView"]';
+  // Polled by the app so the capture screen can say how much of the thread has loaded.
+  function summary() {
+    if (location.href !== source) return {article: false, status: false, posts: 0};
+    scan();
+    return {article: isX && !!document.querySelector(articleView), status: !!status, posts: posts.size};
+  }
+
   function capture() {
     if (location.href !== source) return JSON.stringify({error:'The page changed. Reload the page before capturing this link.'});
     scan();
-    if (isX && status && !document.querySelector('[data-testid="twitterArticleReadView"], [data-testid="twitterArticleRichTextView"]')) {
+    if (isX && status && !document.querySelector(articleView)) {
       if (!posts.has(status[2])) return JSON.stringify({error: 'The linked post is not loaded. Sign in if needed, open the post, then try again.'});
       // Snowflake IDs sort chronologically without floating-point precision loss.
       const ordered = [...posts.values()].sort((a,b) => a.id.length-b.id.length || a.id.localeCompare(b.id));
@@ -151,5 +159,5 @@
   scan();
   const timer = setInterval(scan, 800);
   window.addEventListener('pagehide', () => clearInterval(timer), {once:true});
-  window.__xaveCollector = {capture, source, stop: () => clearInterval(timer)};
+  window.__xaveCollector = {capture, summary, source, stop: () => clearInterval(timer)};
 })();

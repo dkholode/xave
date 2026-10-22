@@ -9,6 +9,10 @@
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:popupMenuStyle">@style/Menu</item>
+    </style>
+    <style name="Menu" parent="android:Widget.Material.Light.PopupMenu">
+        <item name="android:popupBackground">@drawable/menu_light</item>
     </style>
     <style name="AppTheme.Dark" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
@@ -19,5 +23,9 @@
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#000000</item>
+        <item name="android:popupMenuStyle">@style/Menu.Dark</item>
+    </style>
+    <style name="Menu.Dark" parent="android:Widget.Material.PopupMenu">
+        <item name="android:popupBackground">@drawable/menu_dark</item>
     </style>
 </resources>
