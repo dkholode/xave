@@ -133,11 +133,14 @@
   }
 
   const articleView = '[data-testid="twitterArticleReadView"], [data-testid="twitterArticleRichTextView"], [data-article-part="body"]';
-  // Polled by the app so the capture screen can say how much of the thread has loaded.
+  // Polled by the app so the capture screen can say how much of the thread has loaded, and so it can
+  // save without a tap once the linked post or the Article's text stops changing.
   function summary() {
-    if (location.href !== source) return {article: false, status: false, posts: 0};
+    if (location.href !== source) return {article: false, status: false, posts: 0, linked: false, articleLength: 0};
     scan();
-    return {article: isX && !!document.querySelector(articleView), status: !!status, posts: posts.size};
+    const view = isX && document.querySelector(articleView);
+    return {article: !!view, status: !!status, posts: posts.size, linked: !!status && posts.has(status[2]),
+      articleLength: view ? view.innerText.length : 0};
   }
 
   function capture() {

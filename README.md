@@ -31,18 +31,23 @@ see [android/README.md](android/README.md).
 ## Use
 
 1. Paste a link to an X post or Article, or use Share in the X app and pick Xave.
-2. Let the page load. Sign in to X if it asks, then expand long posts and
-   scroll the thread to load the posts you want to keep.
-3. Tap **Capture** once the top bar shows the posts you want as loaded. Xave
-   saves it right away and opens it. Replies from other accounts aren't saved.
+2. Let the page load. A single post or an X Article saves and opens by itself.
+   If the post doesn't load, or the page can't load at all, Xave tells you and
+   saves nothing.
+3. A thread waits for you, because only scrolling loads all of its posts. Sign
+   in to X if it asks, expand long posts, scroll to load the posts you want,
+   then tap **Capture**. Touching the page before it saves also lets you do
+   this. Replies from other accounts aren't saved.
 4. If something is missing, press Back to return to the loaded page, scroll
-   further, and capture again. Delete the copy you don't need. **‹** returns to
-   the library.
+   further, and capture again. The new capture replaces the old one. **‹**
+   returns to the library.
 5. In the reader, the **⋮** menu has text size, theme, export, the post on X,
    and delete. **Prev / Next** page through it, and your position is saved.
    **Export** saves a self-contained HTML file or opens Android's
    Print / Save as PDF dialog, if a print service is installed.
 6. To delete one or more items from the library, use **⋮ > Delete** there.
+7. To always look over the page and tap **Capture** yourself, choose
+   **⋮ > Saving** in the library, then **Review the page, then tap Capture**.
 
 **Theme**, in the **⋮** menu, follows your system's dark mode by default. Choose
 **Light** on e-ink screens for the sharpest text.

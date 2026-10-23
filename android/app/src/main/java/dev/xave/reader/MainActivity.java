@@ -14,9 +14,11 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.print.PrintManager;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.EditorInfo;
@@ -63,6 +65,12 @@ public class MainActivity extends Activity {
     private LinearLayout screen;
     private WebView browser;
     private TextView status;
+    private TextView tip;
+    private static final String REVIEW_TIP = "Scroll the thread and expand long posts first. Replies aren't saved.";
+    // Set while a link may still save without a tap; null once it saves, stops, or you take over.
+    private AutoSave autoSave;
+    // The saved item this capture replaces, when you went back to its own post to capture it again.
+    private File replacing;
     private String collector;
     private String mode = "library";
     private JSONObject document;
@@ -248,8 +256,8 @@ public class MainActivity extends Activity {
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
-            if (which == 0) showSelection(); else chooseTheme();
+        top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Delete", "Saving", "Theme"}, which -> {
+            if (which == 0) showSelection(); else if (which == 1) chooseSaving(); else chooseTheme();
         })));
         LinearLayout field = bar();
         field.setBackground(outline(false)); field.setPadding(dp(16), dp(3), dp(3), dp(3));
@@ -421,17 +429,20 @@ public class MainActivity extends Activity {
                 || !ReaderDocument.xHost(Uri.parse(url).getHost())) {
             error("Paste a link to an X post or Article, such as https://x.com/…/status/…"); return;
         }
+        File replaces = "reader".equals(mode) && document != null && url.equals(document.optString("source")) ? currentFile : null;
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
         else destroySource();
-        layout("online"); document = null; currentFile = null;
+        layout("online"); document = null; currentFile = null; replacing = replaces;
+        // A recapture is for loading more of the page first, so only a new link saves without a tap.
+        autoSave = replaces == null && !getPreferences(0).getBoolean("review", false) ? new AutoSave(SystemClock.uptimeMillis()) : null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
         LinearLayout top = bar();
         top.addView(icon("‹", "Back to library", v -> showLibrary()));
         status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
         top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(pill("Capture", true, this::capture));
-        TextView tip = label("Scroll the thread and expand long posts first. Replies aren't saved.", 14);
+        tip = label(autoSave != null ? "Saves once the page loads. Touch the page to review it first." : REVIEW_TIP, 14);
         tip.setTextColor(muted()); screen.addView(tip);
         browser = resumed == null ? new WebView(this) : resumed;
         if (foreground) browser.resumeTimers();
@@ -464,7 +475,10 @@ public class MainActivity extends Activity {
                 pollStatus();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError e) {
-                if (request.isForMainFrame()) { pageFailed = true; status.setText("Page could not load. Check Wi-Fi and the link."); }
+                if (!request.isForMainFrame()) return;
+                pageFailed = true; status.setText("Page could not load. Check Wi-Fi and the link.");
+                // You may be waiting on the save elsewhere, so a failed load gets a dialog, not just the status line.
+                if (view == browser && autoSave != null) { stopAutoSave(REVIEW_TIP); error("Page could not load. Check Wi-Fi and the link."); }
             }
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 return renderGone(view);
@@ -492,15 +506,26 @@ public class MainActivity extends Activity {
                 status.setText(found.getBoolean("article") ? "X Article loaded"
                     : posts > 0 ? posts + (posts == 1 ? " post loaded" : " posts loaded")
                     : found.getBoolean("status") ? "Loading posts…" : "Ready");
+                if (autoSave != null) {
+                    AutoSave.Step step = autoSave.next(found, SystemClock.uptimeMillis());
+                    if (step == AutoSave.Step.THREAD) stopAutoSave("This is a thread. Scroll to load the posts you want, then tap Capture. Replies aren't saved.");
+                    else if (step == AutoSave.Step.SAVE) { stopAutoSave(REVIEW_TIP); capture(); }
+                }
             } catch (Exception ignored) { }
         });
         ui.postDelayed(poll, 1000);
+    }
+
+    private void stopAutoSave(String message) {
+        autoSave = null;
+        tip.setText(message);
     }
 
     private void capture() {
         if (busy || browser == null) return;
         busy = true;
         int token = generation;
+        File replaces = replacing;
         status.setText("Capturing loaded content…");
         // evaluateJavascript returns data only; websites cannot call native app methods.
         browser.evaluateJavascript(collector + "\nwindow.__xaveCollector.capture();", encoded -> {
@@ -536,6 +561,10 @@ public class MainActivity extends Activity {
                     try {
                         writeAtomic(file, doc.toString());
                         try { writeSummary(file, doc); } catch (Exception ignored) { }
+                        if (replaces != null) {
+                            try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
+                            getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
+                        }
                         runOnUiThread(() -> { if (token == generation && !isFinishing()) {
                             showReader(doc, file, true);
                         } });
@@ -693,6 +722,15 @@ public class MainActivity extends Activity {
             }).show();
     }
 
+    private void chooseSaving() {
+        boolean review = getPreferences(0).getBoolean("review", false);
+        new AlertDialog.Builder(this).setTitle("Saving")
+            .setSingleChoiceItems(new String[]{"Save when the page loads", "Review the page, then tap Capture"}, review ? 1 : 0, (dialog,which) -> {
+                dialog.dismiss();
+                getPreferences(0).edit().putBoolean("review", which == 1).apply();
+            }).show();
+    }
+
     private void deleteCurrent() {
         File target = currentFile;
         if (target == null || busy) return;
@@ -787,6 +825,11 @@ public class MainActivity extends Activity {
         super.onResume();
         foreground = true;
         if (browser != null) { browser.resumeTimers(); browser.onResume(); }
+    }
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        // Touching the capture screen means you want to look first, such as to sign in or scroll.
+        if ("online".equals(mode) && autoSave != null && event.getActionMasked() == MotionEvent.ACTION_DOWN) stopAutoSave(REVIEW_TIP);
+        return super.dispatchTouchEvent(event);
     }
     @Override public void onBackPressed() {
         // Only the capture just made keeps its loaded page, so Back from it returns there.
