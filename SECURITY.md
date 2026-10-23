@@ -30,7 +30,9 @@ untrusted:
 - Images are downloaded without following redirects, and site cookies are sent
   only to images on the captured page's own host. Cookies are never saved in
   articles or exports.
-- The library and browser sessions are stored in the app's private storage and
-  are excluded from Android backups.
+- The library and browser sessions are stored in the app's private storage.
+  Cloud backup is off. Device-to-device transfer on Android 12 and later copies
+  only the library and reading settings, never browser data such as cookies.
+  On Android 11 and earlier, nothing is backed up or transferred.
 
 Reports that bypass any of these are in scope.

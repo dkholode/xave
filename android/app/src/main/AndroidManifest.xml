@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Backup stays on so phone-to-phone transfer works on every device. The rules in res/xml
+         keep cloud backup empty and browser sign-ins on the device. -->
     <application
-        android:allowBackup="false"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/ic_xave"
         android:label="Xave"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="false" >
+        android:usesCleartextTraffic="false"
+        tools:targetApi="31" >
         <!-- Rotation must not reload the online page: it holds scrolled-in posts and in-flight captures. -->
         <activity
             android:name="dev.xave.reader.MainActivity"

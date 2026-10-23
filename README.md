@@ -50,9 +50,11 @@ see [android/README.md](android/README.md).
 
 ## Privacy
 
-Your library and browser sessions stay on the device. Xave has no account,
-server, analytics, or ads. Uninstalling the app or clearing its data deletes
-the library, so export anything you want to keep separately.
+Your library and X sign-in stay on your device. Xave has no account, server,
+analytics, or ads, and it doesn't use cloud backup. On Android 12 and later,
+Android's transfer to a new phone copies your library but not your sign-in.
+Uninstalling the app or clearing its data deletes the library, so export
+anything you want to keep separately.
 
 Xave saves pages you can already open in your own browser, for your personal
 reading. Respect content owners' rights and each site's terms.

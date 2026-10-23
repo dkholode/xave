@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 and later. Nothing goes to cloud backup. A phone-to-phone transfer copies the library and
+     reading settings, but not the browser's data, so X sign-ins stay on the old device. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="library/" />
+        <include domain="file" path="images/" />
+        <include domain="sharedpref" path="MainActivity.xml" />
+    </device-transfer>
+</data-extraction-rules>
