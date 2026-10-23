@@ -10,7 +10,9 @@
   const posts = new Map();
   let author = status && status[1] && !['i', 'web'].includes(status[1]) ? status[1].toLowerCase() : '';
   const clean = s => (s || '').replace(/\u00a0/g, ' ').trim();
-  const visible = el => !!(el.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden';
+  // display:contents wrappers have no boxes of their own but still show their children.
+  const visible = el => !!(el.getClientRects().length || getComputedStyle(el).display === 'contents')
+    && getComputedStyle(el).visibility !== 'hidden';
   const image = el => ({kind: 'image', url: el.currentSrc || el.src,
     text: el.alt || 'Image'});
 
@@ -47,9 +49,10 @@
 
   function article() {
     const xArticle = document.querySelector('[data-testid="twitterArticleReadView"]');
-    const xBody = document.querySelector('[data-testid="twitterArticleRichTextView"]');
+    // Anonymous status pages render the Article inline, marked by data-article-part instead of test IDs.
+    const xBody = document.querySelector('[data-testid="twitterArticleRichTextView"], [data-article-part="body"]');
     const root = xArticle || xBody;
-    const title = clean(document.querySelector('[data-testid="twitter-article-title"]')?.innerText
+    const title = clean(document.querySelector('[data-testid="twitter-article-title"], [data-article-part="title"]')?.innerText
       || root.querySelector('h1')?.innerText || document.title);
     const blocks = [];
     const excluded = 'nav,footer,aside,script,style,noscript,form,button,[role="navigation"],[hidden],[aria-hidden="true"]';
@@ -128,7 +131,7 @@
     return {title, blocks};
   }
 
-  const articleView = '[data-testid="twitterArticleReadView"], [data-testid="twitterArticleRichTextView"]';
+  const articleView = '[data-testid="twitterArticleReadView"], [data-testid="twitterArticleRichTextView"], [data-article-part="body"]';
   // Polled by the app so the capture screen can say how much of the thread has loaded.
   function summary() {
     if (location.href !== source) return {article: false, status: false, posts: 0};
