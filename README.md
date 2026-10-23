@@ -1,4 +1,14 @@
-# Xave
+<p align="center">
+  <img src=".github/logo.svg" width="96" alt="Xave logo">
+</p>
+
+<h1 align="center">Xave</h1>
+
+<p align="center">
+  <a href="https://github.com/dkholode/xave/actions/workflows/ci.yml"><img src="https://github.com/dkholode/xave/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/dkholode/xave/releases/latest"><img src="https://img.shields.io/github/v/release/dkholode/xave" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dkholode/xave" alt="License"></a>
+</p>
 
 Xave is an Android app for saving X posts, threads, and Articles to read
 offline. Open a post in its built-in browser, capture what it loaded, and keep a
