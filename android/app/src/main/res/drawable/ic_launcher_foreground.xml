@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Three posts joined by a reply line: a saved thread. Drawn inside the 66dp safe zone of the 108dp canvas,
+     and also used as the themed icon, which takes only the shape. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:strokeColor="#000000" android:strokeWidth="3.5" android:pathData="M37,37v34" />
+    <path android:fillColor="#000000" android:pathData="M31,35a6,6 0 1,0 12,0a6,6 0 1,0 -12,0z M31,54a6,6 0 1,0 12,0a6,6 0 1,0 -12,0z M31,73a6,6 0 1,0 12,0a6,6 0 1,0 -12,0z" />
+    <path android:fillColor="#000000" android:pathData="M53,31h19a4,4 0 0 1 0,8h-19a4,4 0 0 1 0,-8z M53,50h14a4,4 0 0 1 0,8h-14a4,4 0 0 1 0,-8z M53,69h8a4,4 0 0 1 0,8h-8a4,4 0 0 1 0,-8z" />
+</vector>
