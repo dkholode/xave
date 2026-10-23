@@ -32,7 +32,8 @@
       if (!author || match[1].toLowerCase() !== author) return;
       const text = own('[data-testid="tweetText"], [dir="auto"].whitespace-pre-wrap')[0];
       const blocks = [];
-      if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]'))
+      // Empty text doesn't count, so a post X renders without readable content is refused instead of saved blank.
+      if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]') && clean(text.innerText))
         blocks.push({kind: 'text', text: clean(text.innerText)});
       // Photo containers inside quoted posts are deliberately excluded.
       own('[data-testid="tweetPhoto"] img, a[href*="/status/' + match[2] + '/photo/"] img').forEach(img => {

@@ -124,6 +124,11 @@ test('Anonymous X status pages capture an inline X Article instead of its empty 
   assert(doc.blocks.some(b => b.kind === 'listItem' && b.text === 'First point'), 'Lost the article list');
   assert(!/6 min read|4\.1K|\.x\{\}/.test(JSON.stringify(doc.blocks)), 'Captured page chrome'); f.close();
 });
+test('X refuses a post with no readable text or images instead of saving only its timestamp', () => {
+  const f = fixture(`<main><article><div dir="auto" class="whitespace-pre-wrap"></div><a href="https://m.x.com/alice/status/${root}?launch_app_store=true&ct=engagement_view_post">7:16 PM · Oct 22, 2026</a></article></main>`, `https://x.com/alice/status/${root}`);
+  assert(f.summary().posts === 0, 'Counted an empty post as loaded');
+  assert(!!f.capture().error, 'Saved a capture with no content'); f.close();
+});
 
 test('Inline text, emphasis, and links stay in one paragraph in DIV-based articles', () => {
   const f = xArticle('Rich text', `<p>${paragraph}</p><div>Read <strong>this important</strong> sentence with <a href="/reference">a reference</a> here.</div>`);
