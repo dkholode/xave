@@ -20,14 +20,15 @@ details.
 2. Keep changes small and focused on one problem.
 3. Add or update a test when you change capture or rendering behavior:
    - Page extraction: add a DOM fixture to `android/tests/capture.test.js`.
-   - Rendering and storage: add a check to
-     `android/tests/java/dev/xave/reader/ReaderHostTest.java`.
+   - Rendering and storage: add a test under
+     `android/app/src/test/java/dev/xave/reader/`.
 4. Run both test suites (see [android/README.md](android/README.md#tests)) and
    test on a device or emulator when you change the UI.
 5. Open a pull request describing what changed and how you tested it. CI builds
    the APK and runs the tests.
 
-Xave has no third-party libraries. Please discuss adding one in an issue first.
+The app has no third-party libraries; only the tests use JUnit and org.json.
+Please discuss adding one in an issue first.
 
 ## Security-sensitive code
 

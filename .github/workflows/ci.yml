@@ -19,13 +19,8 @@ jobs:
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build and lint
-        run: ./gradlew assembleDebug lintDebug
-
-      - name: Renderer and storage tests
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/json.jar" https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar
-          XAVE_JSON_JAR="$RUNNER_TEMP/json.jar" python3 tests/run_host_tests.py
+      - name: Build, lint, and unit tests
+        run: ./gradlew assembleDebug lintDebug testDebugUnitTest
 
       - name: Capture tests
         run: |

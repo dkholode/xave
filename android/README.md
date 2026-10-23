@@ -35,19 +35,13 @@ uninstalling the previous app, which removes its saved library.
 
 ## Tests
 
-For renderer and storage checks, install Python 3 and Android Studio, then run:
+Renderer and storage tests run on your computer, without a device:
 
 ```bash
-python3 tests/run_host_tests.py
+./gradlew test
 ```
 
-The script uses Android Studio's bundled JDK and JSON library on macOS. On other
-systems, set `JAVA_HOME` to a JDK and `XAVE_JSON_JAR` to a JAR containing
-`org.json`, such as
-[json-20240303.jar](https://repo1.maven.org/maven2/org/json/json/20240303/json-20240303.jar)
-from Maven Central.
-
-For capture checks:
+For capture checks, install Python 3 and run:
 
 ```bash
 python3 tests/build_test_page.py
