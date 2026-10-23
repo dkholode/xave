@@ -15,8 +15,7 @@ Security fixes go into the latest release.
 
 ## Security model
 
-Xave captures content from arbitrary websites, so it treats every page as
-untrusted:
+Xave captures content from X, so it treats every page as untrusted:
 
 - The capture script runs in the page through `evaluateJavascript` and only
   returns data. Websites have no JavaScript bridge into the app.

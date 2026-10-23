@@ -46,14 +46,11 @@
   }
 
   function article() {
-    const xArticle = isX && document.querySelector('[data-testid="twitterArticleReadView"]');
-    const xBody = isX && document.querySelector('[data-testid="twitterArticleRichTextView"]');
-    const candidates = [...document.querySelectorAll('article, main, [role="main"], .post-content, .entry-content, #content')];
-    const score = el => [...el.querySelectorAll('p,pre,li')].reduce((n,p) => n + clean(p.innerText).length, 0);
-    const specific = candidates.filter(el => el.matches('article, .post-content, .entry-content') && score(el) >= 100);
-    const root = xArticle || xBody || (specific.length ? specific : candidates).sort((a,b) => score(b)-score(a))[0] || document.body;
-    const title = clean((xArticle || xBody) && document.querySelector('[data-testid="twitter-article-title"]')?.innerText
-      || root.querySelector('h1')?.innerText || document.querySelector('h1')?.innerText || document.title);
+    const xArticle = document.querySelector('[data-testid="twitterArticleReadView"]');
+    const xBody = document.querySelector('[data-testid="twitterArticleRichTextView"]');
+    const root = xArticle || xBody;
+    const title = clean(document.querySelector('[data-testid="twitter-article-title"]')?.innerText
+      || root.querySelector('h1')?.innerText || document.title);
     const blocks = [];
     const excluded = 'nav,footer,aside,script,style,noscript,form,button,[role="navigation"],[hidden],[aria-hidden="true"]';
     let pending = [], pendingContext = {}, skippedTitle = false;
@@ -141,14 +138,16 @@
 
   function capture() {
     if (location.href !== source) return JSON.stringify({error:'The page changed. Reload the page before capturing this link.'});
+    if (!isX) return JSON.stringify({error:'Xave saves X posts and Articles only. Open an x.com link to capture it.'});
     scan();
-    if (isX && status && !document.querySelector(articleView)) {
+    if (status && !document.querySelector(articleView)) {
       if (!posts.has(status[2])) return JSON.stringify({error: 'The linked post is not loaded. Sign in if needed, open the post, then try again.'});
       // Snowflake IDs sort chronologically without floating-point precision loss.
       const ordered = [...posts.values()].sort((a,b) => a.id.length-b.id.length || a.id.localeCompare(b.id));
       return JSON.stringify({title: '@' + author + ' · ' + ordered.length + (ordered.length === 1 ? ' post' : ' posts'),
         source, blocks: ordered.flatMap((p,i) => i ? [{kind:'divider'}, ...p.blocks] : p.blocks)});
     }
+    if (!document.querySelector(articleView)) return JSON.stringify({error:'Open a post or an X Article, then try again.'});
     const result = article();
     if (result.blocks.filter(b => b.kind !== 'image').map(b => b.text || '').join('').length < 100)
       return JSON.stringify({error:'Not enough readable text found. Wait for the article to load or open its full reading view, then try again.'});

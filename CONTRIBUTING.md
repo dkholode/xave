@@ -1,13 +1,14 @@
 # Contributing to Xave
 
-Thanks for helping. Bug reports, site-capture fixes, and focused pull requests
-are all welcome.
+Thanks for helping. Bug reports, X capture fixes, and focused pull requests are
+all welcome.
 
 ## Reporting a capture problem
 
-Most issues are pages that capture badly. Please include:
+Most issues are X posts, threads, or Articles that capture badly. Please
+include:
 
-- The URL, if it is public
+- The post URL, if it is public
 - What was missing or wrong in the capture
 - Your device and Android version
 
@@ -32,8 +33,8 @@ Please discuss adding one in an issue first.
 
 ## Security-sensitive code
 
-The capture script runs inside arbitrary websites, and the reader displays
-content from them. Keep these properties intact:
+The capture script runs inside X's pages, and the reader displays content
+from them. Keep these properties intact:
 
 - Websites never get a JavaScript bridge into the app.
 - Saved reading runs without JavaScript or network access.

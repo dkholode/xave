@@ -428,8 +428,9 @@ public class MainActivity extends Activity {
     private void openOnline(String input) {
         String url = input.trim();
         if (!url.contains("://")) url = "https://" + url;
-        if (!ReaderDocument.webUrl(url) || !"https".equalsIgnoreCase(Uri.parse(url).getScheme())) {
-            error("Enter a valid https:// web link."); return;
+        if (!ReaderDocument.webUrl(url) || !"https".equalsIgnoreCase(Uri.parse(url).getScheme())
+                || !ReaderDocument.xHost(Uri.parse(url).getHost())) {
+            error("Paste a link to an X post or Article, such as https://x.com/…/status/…"); return;
         }
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
@@ -686,9 +687,12 @@ public class MainActivity extends Activity {
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String link = request.getUrl().toString();
-                if (ReaderDocument.webUrl(link)) new AlertDialog.Builder(MainActivity.this)
-                    .setMessage("Open this link online?\n" + link).setNegativeButton("Cancel", null)
-                    .setPositiveButton("Open", (d,w) -> openOnline(link)).show();
+                if (!ReaderDocument.webUrl(link)) return true;
+                // Xave can only capture X, so links elsewhere go to the device's browser.
+                boolean x = link.startsWith("https://") && ReaderDocument.xHost(request.getUrl().getHost());
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage((x ? "Open this link online?\n" : "Open this link in your browser?\n") + link).setNegativeButton("Cancel", null)
+                    .setPositiveButton("Open", (d,w) -> { if (x) openOnline(link); else openInBrowser(link); }).show();
                 return true;
             }
             @Override public void onPageFinished(WebView view, String url) {
@@ -717,6 +721,11 @@ public class MainActivity extends Activity {
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
         footer.addView(pill("Next", false, () -> browser.pageDown(false)));
         browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
+    }
+
+    private void openInBrowser(String link) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(link))); }
+        catch (android.content.ActivityNotFoundException e) { error("No browser is installed to open this link."); }
     }
 
     private void updateReadingProgress() {

@@ -21,7 +21,7 @@ public final class ReaderDocumentTest {
     private static JSONObject text(String text) throws Exception { return new JSONObject().put("kind", "text").put("text", text); }
     private static JSONObject link(String text, String url) throws Exception { return new JSONObject().put("kind", "link").put("text", text).put("url", url); }
 
-    /** An article that uses every block kind. */
+    /** An X Article opened from a share link, so its source names no author. */
     private static JSONObject article() throws Exception {
         JSONArray runs = new JSONArray()
             .put(new JSONObject().put("text", "Read "))
@@ -37,7 +37,7 @@ public final class ReaderDocumentTest {
             .put(new JSONObject().put("kind", "code").put("text", "  if (offline) {\n    read();\n  }"));
         for (int i=0; i<12; i++) blocks.put(text("Paragraph " + i + ". The reader keeps the article in focus."));
         return new JSONObject().put("title", "A calmer offline reading experience")
-            .put("source", "https://example.org/a-readable-article").put("savedAt", "Oct 21, 2026")
+            .put("source", "https://x.com/i/article/1234").put("savedAt", "Oct 21, 2026")
             .put("blocks", blocks);
     }
 
@@ -100,7 +100,7 @@ public final class ReaderDocumentTest {
         assertEquals("Saved 1 post by @bob", ReaderDocument.savedMessage(new JSONObject().put("title", "@bob · 1 post")));
         assertEquals("Saved X Article by @bob", ReaderDocument.savedMessage(
             new JSONObject().put("title", "Why e-ink finally works").put("source", "https://x.com/bob/status/9")));
-        assertEquals("Saved for offline reading", ReaderDocument.savedMessage(article()));
+        assertEquals("Saved X Article", ReaderDocument.savedMessage(article()));
     }
 
     @Test public void exportsCarryTheSaveDateAndSource() throws Exception {

@@ -34,15 +34,6 @@ final class ReaderDocument {
         if (!genericTitle(title)) {
             return title;
         } else {
-            try {
-                String host = (new URI(document.optString("source"))).getHost();
-                if (!xHost(host)) {
-                    return title.isEmpty() ? "Saved article" : title;
-                }
-            } catch (Exception ignored) {
-                return title.isEmpty() ? "Saved article" : title;
-            }
-
             JSONArray blocks = document.optJSONArray("blocks");
             boolean sawHandle = false;
             if (blocks != null) {
@@ -78,7 +69,7 @@ final class ReaderDocument {
         Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
         if (thread.matches()) return "Saved " + thread.group(2) + (thread.group(2).equals("1") ? " post" : " posts") + " by @" + thread.group(1);
         String handle = handle(document.optString("source"));
-        return handle.isEmpty() ? "Saved for offline reading" : "Saved X Article by @" + handle;
+        return handle.isEmpty() ? "Saved X Article" : "Saved X Article by @" + handle;
     }
 
     private static String firstPost(JSONObject document) {
@@ -94,7 +85,7 @@ final class ReaderDocument {
         return document.optString("title");
     }
 
-    /** The account in an x.com/handle/status/... link, or empty for share links and other sites. */
+    /** The account in an x.com/handle/status/... link, or empty for share links. */
     private static String handle(String source) {
         try {
             URI uri = new URI(source);
@@ -211,12 +202,7 @@ final class ReaderDocument {
         boolean isThread = thread.matches();
         StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'\"><title>" + escape(title) + "</title><style>body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}h1{font-size:1.25em;line-height:1.25;margin:0 0 6px}h2{font-size:1.15em}h3,h4,h5,h6{font-size:1.05em}p{white-space:pre-wrap;margin:.8em 0}h2,h3,h4,h5,h6{break-after:avoid}img{max-width:100%;height:auto}pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}figcaption{font:15px/1.5 sans-serif}.byline{font:15px/1.4 sans-serif;opacity:.65;margin:0 0 22px}.byline a{color:inherit}.post-meta{font:14px/1.4 sans-serif;margin:0 0 6px;break-after:avoid}.post-meta a{display:flex;justify-content:space-between;color:inherit;text-decoration:none;opacity:.6}.note{font:15px/1.4 sans-serif;white-space:normal;border:1px solid;border-radius:8px;padding:8px 12px;opacity:.7}.list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}a{color:#000;text-decoration:underline}hr{border:0;border-top:1px solid #000;opacity:.3;margin:24px 0}figure{margin:16px 0}.print-info{font:11px/1.4 sans-serif;margin-top:32px}" + (export ? "" : ".print-info{display:none}@media print{.print-info{display:block}}") + (dark ? "@media screen{body{color:#eee;background:#000}a{color:#eee}hr{border-top-color:#eee}}" : "") + "</style></head><body>");
         String source = document.optString("source");
-        String host = "";
-        try {
-            host = (new URI(source)).getHost();
-        } catch (Exception ignored) {
-        }
-        String open = webUrl(source) ? "<a href=\"" + escape(source) + "\">" + (xHost(host) ? "Open on X" : "Open original") + "</a>" : "";
+        String open = webUrl(source) ? "<a href=\"" + escape(source) + "\">Open on X</a>" : "";
         String byline;
         if (isThread) {
             html.append("<h1>@").append(thread.group(1)).append("</h1>");
