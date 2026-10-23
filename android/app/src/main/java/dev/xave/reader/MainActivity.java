@@ -73,7 +73,6 @@ public class MainActivity extends Activity {
     private String mode = "library";
     private JSONObject document;
     private File currentFile;
-    private File currentDraft;
     private WebView sourceBrowser;
     private String sourceUrl;
     private TextView readingProgress;
@@ -115,14 +114,6 @@ public class MainActivity extends Activity {
             String savedItem = state.getString("savedItem");
             if (savedItem != null && savedItem.equals(new File(savedItem).getName())
                     && new File(library(), savedItem).isFile()) openSaved(new File(library(), savedItem));
-            else if (state.getString("draftItem") != null
-                    && state.getString("draftItem").equals(new File(state.getString("draftItem")).getName())) {
-                File draft = new File(drafts(), state.getString("draftItem"));
-                // Saving may have completed while Android was recreating this screen.
-                File saved = new File(library(), draft.getName());
-                if (saved.isFile()) openSaved(saved);
-                else if (draft.isFile()) openDraft(draft);
-            }
             else if (state.getString("onlineUrl") != null) openOnline(state.getString("onlineUrl"));
         }
     }
@@ -131,7 +122,6 @@ public class MainActivity extends Activity {
         rememberPosition();
         if ("reader".equals(mode) && currentFile != null) state.putString("savedItem", currentFile.getName());
         if ("online".equals(mode) && browser != null) state.putString("onlineUrl", browser.getUrl());
-        if ("reader".equals(mode) && currentDraft != null) state.putString("draftItem", currentDraft.getName());
         state.putString("pendingExportFile", pendingExportFile);
         super.onSaveInstanceState(state);
     }
@@ -247,12 +237,12 @@ public class MainActivity extends Activity {
 
     private void showLibrary() {
         destroySource();
-        layout("library"); document = null; currentFile = null; currentDraft = null;
+        layout("library"); document = null; currentFile = null;
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(icon("⋮", v -> popup(v, new String[]{"Manage multiple", "Theme"}, which -> {
-            if (which == 0) manageMultiple(); else chooseTheme();
+        top.addView(icon("⋮", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
+            if (which == 0) showSelection(); else chooseTheme();
         })));
         LinearLayout field = bar();
         field.setBackground(outline(false)); field.setPadding(dp(16), dp(3), dp(3), dp(3));
@@ -269,26 +259,17 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         LinearLayout entries = new LinearLayout(this); entries.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(entries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        File[] unfinished = newestFirst(drafts());
-        if (unfinished.length > 0) {
-            section(entries, "Not saved yet · " + unfinished.length);
-            for (File draft : unfinished) addLibraryEntry(entries, draft, true);
-        }
         section(entries, "Saved · " + files.length);
         if (files.length == 0) {
             TextView empty = label("Your saved reading will appear here.", 17);
             empty.setTextColor(muted()); empty.setPadding(0, dp(8), 0, dp(8));
             entries.addView(empty);
         }
-        for (File file : files) addLibraryEntry(entries, file, false);
-    }
-
-    private void addLibraryEntry(LinearLayout entries, File file, boolean draft) {
-        entry(entries, file, draft).setOnClickListener(v -> { if (draft) openDraft(file); else openSaved(file); });
+        for (File file : files) entry(entries, file).setOnClickListener(v -> openSaved(file));
     }
 
     /** A library row: the first post or article title, with the author and post count under it. */
-    private LinearLayout entry(LinearLayout entries, File file, boolean draft) {
+    private LinearLayout entry(LinearLayout entries, File file) {
         JSONObject summary;
         boolean repair = false;
         try {
@@ -311,7 +292,7 @@ public class MainActivity extends Activity {
             int token = generation;
             io.execute(() -> {
                 try {
-                    JSONObject doc = draft ? readDocument(file) : readSavedDocument(file);
+                    JSONObject doc = readSavedDocument(file);
                     JSONObject fresh = ReaderDocument.summary(doc);
                     try { writeSummary(file, doc); } catch (Exception ignored) { }
                     runOnUiThread(() -> {
@@ -328,117 +309,89 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private void manageMultiple() {
-        new AlertDialog.Builder(this).setTitle("Manage multiple")
-            .setItems(new String[]{"Select captures to save", "Select items to delete"}, (dialog,which) -> showSelection(which == 1))
-            .show();
-    }
-
-    /** Save mode lists only unsaved captures; delete mode lists everything. */
-    private void showSelection(boolean delete) {
-        layout(delete ? "delete" : "save"); document = null; currentFile = null; currentDraft = null;
+    private void showSelection() {
+        layout("delete"); document = null; currentFile = null;
         selected.clear();
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
-        TextView heading = label(delete ? "Select to delete" : "Select to save", 19);
+        TextView heading = label("Select to delete", 19);
         heading.setTypeface(Typeface.DEFAULT_BOLD);
         top.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView action = pill(delete ? "Delete" : "Save", true, () -> applySelection(delete));
+        TextView action = pill("Delete", true, this::applySelection);
         top.addView(action);
         divider(screen);
         ScrollView scroll = new ScrollView(this);
         LinearLayout entries = new LinearLayout(this); entries.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(entries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        File[] unfinished = newestFirst(drafts());
-        File[] files = delete ? newestFirst(library()) : new File[0];
-        if (unfinished.length > 0) {
-            section(entries, "Not saved yet · " + unfinished.length);
-            for (File draft : unfinished) selectable(entries, draft, true, action, delete);
-        }
-        if (files.length > 0) {
-            section(entries, "Saved · " + files.length);
-            for (File file : files) selectable(entries, file, false, action, delete);
-        }
-        if (unfinished.length + files.length == 0) {
-            TextView empty = label(delete ? "Nothing to delete." : "Every capture is already saved.", 17);
+        File[] files = newestFirst(library());
+        if (files.length > 0) section(entries, "Saved · " + files.length);
+        for (File file : files) selectable(entries, file, action);
+        if (files.length == 0) {
+            TextView empty = label("Nothing to delete.", 17);
             empty.setTextColor(muted()); empty.setPadding(0, dp(16), 0, dp(8));
             entries.addView(empty);
         }
-        updateSelection(action, delete);
+        updateSelection(action);
     }
 
-    private void selectable(LinearLayout entries, File file, boolean draft, TextView action, boolean delete) {
-        LinearLayout row = entry(entries, file, draft);
+    private void selectable(LinearLayout entries, File file, TextView action) {
+        LinearLayout row = entry(entries, file);
         CheckBox box = new CheckBox(this);
         box.setClickable(false); box.setButtonTintList(ColorStateList.valueOf(fg()));
         row.addView(box, 0);
         row.setOnClickListener(v -> {
             box.setChecked(!box.isChecked());
             if (box.isChecked()) selected.add(file); else selected.remove(file);
-            updateSelection(action, delete);
+            updateSelection(action);
         });
     }
 
-    private void updateSelection(TextView action, boolean delete) {
-        action.setText((delete ? "Delete" : "Save") + (selected.isEmpty() ? "" : " " + selected.size()));
+    private void updateSelection(TextView action) {
+        action.setText("Delete" + (selected.isEmpty() ? "" : " " + selected.size()));
         action.setEnabled(!selected.isEmpty()); action.setAlpha(selected.isEmpty() ? 0.35f : 1);
     }
 
-    private void applySelection(boolean delete) {
+    private void applySelection() {
         if (busy || selected.isEmpty()) return;
         List<File> targets = new ArrayList<>(selected);
-        if (!delete) { runSelection(targets, false); return; }
         String items = targets.size() + (targets.size() == 1 ? " item" : " items");
         new AlertDialog.Builder(this).setMessage("Delete " + items + "? This cannot be undone.")
             .setNegativeButton("Keep", null)
-            .setPositiveButton("Delete", (dialog,which) -> runSelection(targets, true)).show();
+            .setPositiveButton("Delete", (dialog,which) -> deleteSelection(targets)).show();
     }
 
-    private void runSelection(List<File> targets, boolean delete) {
+    private void deleteSelection(List<File> targets) {
         if (busy) return;
         busy = true;
         int token = generation;
         io.execute(() -> {
             int failed = 0;
             for (File target : targets) {
-                try {
-                    if (delete) DocumentFiles.delete(target);
-                    else DocumentFiles.save(target, library(), readDocument(target));
-                } catch (Exception e) { failed++; }
+                try { DocumentFiles.delete(target); } catch (Exception e) { failed++; }
             }
             int missed = failed, done = targets.size() - failed;
             runOnUiThread(() -> {
                 if (token != generation) return;
-                if (delete) {
-                    SharedPreferences.Editor prefs = getPreferences(0).edit();
-                    for (File target : targets) if (!target.exists()) prefs.remove("position:" + target.getName());
-                    prefs.apply();
-                }
+                SharedPreferences.Editor prefs = getPreferences(0).edit();
+                for (File target : targets) if (!target.exists()) prefs.remove("position:" + target.getName());
+                prefs.apply();
                 showLibrary();
-                if (missed > 0) error(delete ? "Could not delete " + missed + " of " + targets.size() + " items."
-                    : "Could not save " + missed + " of " + targets.size() + " captures. They are kept under Not saved yet.");
-                else Toast.makeText(this, (delete ? "Deleted " : "Saved ") + done + (done == 1 ? " item" : " items"), Toast.LENGTH_SHORT).show();
+                if (missed > 0) error("Could not delete " + missed + " of " + targets.size() + " items.");
+                else Toast.makeText(this, "Deleted " + done + (done == 1 ? " item" : " items"), Toast.LENGTH_SHORT).show();
             });
         });
     }
 
-    private JSONObject readDocument(File file) throws Exception {
-        return DocumentFiles.read(file);
-    }
-
-    private void openSaved(File file) { openDocument(file, false); }
-    private void openDraft(File file) { openDocument(file, true); }
-
-    private void openDocument(File file, boolean draft) {
+    private void openSaved(File file) {
         if (busy) return;
         busy = true;
         int token = generation;
         io.execute(() -> {
             try {
-                JSONObject doc = draft ? readDocument(file) : readSavedDocument(file);
-                runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, draft ? null : file, draft ? file : null); });
+                JSONObject doc = readSavedDocument(file);
+                runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, file, false); });
             } catch (Exception e) {
-                runOnUiThread(() -> { if (token == generation) { busy = false; error("Could not open this " + (draft ? "draft." : "saved item.")); } });
+                runOnUiThread(() -> { if (token == generation) { busy = false; error("Could not open this saved item."); } });
             }
         });
     }
@@ -481,14 +434,14 @@ public class MainActivity extends Activity {
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
         else destroySource();
-        layout("online"); document = null; currentFile = null; currentDraft = null;
+        layout("online"); document = null; currentFile = null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
         status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
         top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(pill("Capture", true, this::capture));
-        TextView tip = label("Scroll the thread and expand long posts first.", 14);
+        TextView tip = label("Scroll the thread and expand long posts first. Replies aren't saved.", 14);
         tip.setTextColor(muted()); screen.addView(tip);
         browser = resumed == null ? new WebView(this) : resumed;
         if (foreground) browser.resumeTimers();
@@ -580,20 +533,22 @@ public class MainActivity extends Activity {
                 String userAgent = browser.getSettings().getUserAgentString();
                 status.setText("Downloading images for offline reading…");
                 captures.execute(() -> {
-                    File draft = new File(drafts(), UUID.randomUUID() + ".json");
-                    embedImages(doc, cookies, userAgent, token, DocumentFiles.images(draft));
+                    File file = new File(library(), UUID.randomUUID() + ".json");
+                    embedImages(doc, cookies, userAgent, token, DocumentFiles.images(file));
                     if (token != generation) {
-                        try { DocumentFiles.delete(draft); } catch (Exception ignored) { }
+                        try { DocumentFiles.delete(file); } catch (Exception ignored) { }
                         return;
                     }
                     try {
-                        writeAtomic(draft, doc.toString());
-                        try { writeSummary(draft, doc); } catch (Exception ignored) { }
-                        runOnUiThread(() -> { if (token == generation && !isFinishing()) showReader(doc, null, draft); });
+                        writeAtomic(file, doc.toString());
+                        try { writeSummary(file, doc); } catch (Exception ignored) { }
+                        runOnUiThread(() -> { if (token == generation && !isFinishing()) {
+                            showReader(doc, file, true);
+                        } });
                     } catch (Exception e) {
-                        try { DocumentFiles.delete(draft); } catch (Exception ignored) { }
+                        try { DocumentFiles.delete(file); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation) {
-                            busy = false; error("Could not keep this capture. Check available storage and retry.");
+                            busy = false; error("Could not save this capture. Check available storage and retry.");
                         } });
                     }
                 });
@@ -607,7 +562,6 @@ public class MainActivity extends Activity {
         ArrayList<Integer> pictures = new ArrayList<>();
         for (int i=0; i<blocks.length(); i++) if ("image".equals(blocks.optJSONObject(i).optString("kind"))) pictures.add(i);
         int count = Math.min(40, pictures.size());
-        int missing = pictures.size() - count;
         long deadline = android.os.SystemClock.elapsedRealtime() + 45000;
         AtomicLong total = new AtomicLong();
         AtomicInteger done = new AtomicInteger();
@@ -632,15 +586,13 @@ public class MainActivity extends Activity {
             for (int n=0; n<count; n++) {
                 try {
                     String name = results.get(n).get();
-                    if (name == null) missing++;
-                    else blocks.getJSONObject(pictures.get(n)).put("file", name);
-                } catch (Exception e) { missing++; }
+                    if (name != null) blocks.getJSONObject(pictures.get(n)).put("file", name);
+                } catch (Exception ignored) { }
             }
-        } catch (InterruptedException e) { missing += count; }
+        } catch (InterruptedException ignored) { }
         finally { pool.shutdownNow(); }
         // An inline image is now a file or a placeholder, so its payload need not stay in the article.
         for (int i : pictures) if (blocks.optJSONObject(i).optString("url").startsWith("data:")) blocks.optJSONObject(i).remove("url");
-        if (missing > 0) try { doc.put("warning", doc.optString("warning") + " " + missing + " image(s) could not be saved; placeholders appear below."); } catch (Exception ignored) { }
     }
 
     /** Returns the saved file name, which is the given base name plus the image type's extension. */
@@ -691,8 +643,8 @@ public class MainActivity extends Activity {
         sourceUrl = null;
     }
 
-    private void showReader(JSONObject doc, File file, File draft) {
-        if (draft != null && "online".equals(mode) && browser != null) {
+    private void showReader(JSONObject doc, File file, boolean captured) {
+        if (captured && "online".equals(mode) && browser != null) {
             destroySource();
             // A page that navigated while images downloaded no longer shows this capture's source.
             if (doc.optString("source").equals(browser.getUrl())) {
@@ -701,14 +653,14 @@ public class MainActivity extends Activity {
                 sourceBrowser.onPause(); browser = null;
             }
         }
-        layout("reader"); document = doc; currentFile = file; currentDraft = draft;
+        layout("reader"); document = doc; currentFile = file;
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
-        if (file == null) {
-            TextView state = label("Preview · not saved", 14); state.setTextColor(muted());
-            top.addView(state, new LinearLayout.LayoutParams(0, -2, 1));
-            top.addView(pill("Save", true, this::saveDocument));
-        } else top.addView(new View(this), new LinearLayout.LayoutParams(0, 0, 1));
+        // The save confirmation sits in the bar, clear of the text, and goes after 3 seconds or the first scroll.
+        TextView saved = label(captured ? ReaderDocument.savedMessage(doc) : "", 14);
+        saved.setTextColor(muted()); saved.setMaxLines(1); saved.setEllipsize(TextUtils.TruncateAt.END);
+        top.addView(saved, new LinearLayout.LayoutParams(0, -2, 1));
+        if (captured) saved.postDelayed(() -> saved.setText(""), 3000);
         top.addView(icon("⋮", this::readerOptions));
         divider(screen);
         browser = new WebView(this);
@@ -718,8 +670,7 @@ public class MainActivity extends Activity {
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(false); s.setAllowFileAccess(false); s.setAllowContentAccess(false);
         s.setBlockNetworkLoads(true); s.setTextZoom(zoom);
-        File positionFile = file == null ? draft : file;
-        File images = DocumentFiles.images(positionFile);
+        File images = DocumentFiles.images(file);
         browser.setWebViewClient(new WebViewClient() {
             // Network loads stay blocked; the article's own images are served from app storage.
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -742,7 +693,7 @@ public class MainActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view, String url) {
                 if (view != browser) return;
-                float ratio = positionFile == null ? 0 : getPreferences(0).getFloat("position:" + positionFile.getName(), 0);
+                float ratio = getPreferences(0).getFloat("position:" + file.getName(), 0);
                 view.postVisualStateCallback(0, new WebView.VisualStateCallback() {
                     @Override public void onComplete(long requestId) {
                         if (view != browser) return;
@@ -753,7 +704,10 @@ public class MainActivity extends Activity {
                 });
             }
         });
-        browser.setOnScrollChangeListener((view,x,y,oldX,oldY) -> updateReadingProgress());
+        browser.setOnScrollChangeListener((view,x,y,oldX,oldY) -> {
+            if (y != oldY) saved.setText("");
+            updateReadingProgress();
+        });
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         divider(screen);
         LinearLayout footer = bar(); footer.setPadding(0, dp(8), 0, dp(8));
@@ -762,7 +716,7 @@ public class MainActivity extends Activity {
         readingProgress.setGravity(Gravity.CENTER);
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
         footer.addView(pill("Next", false, () -> browser.pageDown(false)));
-        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, file == null, name -> "images/" + name), "text/html", "UTF-8", null);
+        browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
     }
 
     private void updateReadingProgress() {
@@ -773,9 +727,7 @@ public class MainActivity extends Activity {
     }
 
     private void readerOptions(View anchor) {
-        boolean draft = currentDraft != null;
-        String[] items = draft ? new String[]{"Text size", "Theme", "Back to source", "Discard draft"}
-            : new String[]{"Text size", "Theme", "Export", "Open on X", "Delete"};
+        String[] items = {"Text size", "Theme", "Export", "Open on X", "Delete"};
         popup(anchor, items, which -> {
             if (which == 0) {
                 LinearLayout sizes = new LinearLayout(this);
@@ -786,7 +738,6 @@ public class MainActivity extends Activity {
                 sizes.addView(pill("A+", false, () -> changeZoom(10)), half);
                 new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
             } else if (which == 1) chooseTheme();
-            else if (draft) { if (which == 2) openOnline(document.optString("source")); else deleteCurrent(); }
             else if (which == 2) exportDocument();
             else if (which == 3) openOnline(document.optString("source"));
             else deleteCurrent();
@@ -806,12 +757,11 @@ public class MainActivity extends Activity {
     }
 
     private void deleteCurrent() {
-        boolean draft = currentDraft != null;
-        File target = draft ? currentDraft : currentFile;
+        File target = currentFile;
         if (target == null || busy) return;
-        new AlertDialog.Builder(this).setMessage(draft ? "Discard this unfinished capture?" : "Delete this from your library? This cannot be undone.")
+        new AlertDialog.Builder(this).setMessage("Delete this from your library? This cannot be undone.")
             .setNegativeButton("Keep", null)
-            .setPositiveButton(draft ? "Discard" : "Delete", (dialog,which) -> {
+            .setPositiveButton("Delete", (dialog,which) -> {
                 busy = true; int token = generation;
                 io.execute(() -> {
                     try {
@@ -821,7 +771,7 @@ public class MainActivity extends Activity {
                             // Cleared after leaving the reader, which records the position on exit.
                             getPreferences(0).edit().remove("position:" + target.getName()).apply();
                         } });
-                    } catch (Exception e) { runOnUiThread(() -> { if (token == generation) { busy = false; error(draft ? "Could not discard this draft." : "Could not delete this article."); } }); }
+                    } catch (Exception e) { runOnUiThread(() -> { if (token == generation) { busy = false; error("Could not delete this article."); } }); }
                 });
             }).show();
     }
@@ -830,27 +780,6 @@ public class MainActivity extends Activity {
         zoom = Math.max(70, Math.min(190, zoom + delta));
         getPreferences(0).edit().putInt("zoom", zoom).apply();
         browser.getSettings().setTextZoom(zoom);
-    }
-
-    private void saveDocument() {
-        if (busy || document == null || currentDraft == null) return;
-        rememberPosition();
-        busy = true;
-        JSONObject doc = document;
-        File draft = currentDraft;
-        int token = generation;
-        io.execute(() -> {
-            try {
-                File file = DocumentFiles.save(draft, library(), doc);
-                runOnUiThread(() -> { if (token == generation && !isFinishing()) {
-                    destroySource();
-                    showReader(doc, file, null);
-                    Toast.makeText(this,"Saved for offline reading",Toast.LENGTH_LONG).show();
-                } });
-            } catch (Exception e) {
-                runOnUiThread(() -> { if (token == generation) { busy = false; error("Could not finish saving. Your draft is kept; retry when storage is available."); } });
-            }
-        });
     }
 
     private void exportDocument() {
@@ -901,16 +830,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    private File drafts() { File dir = new File(getFilesDir(), "drafts"); dir.mkdirs(); return dir; }
-
     private File library() { File dir = new File(getFilesDir(), "library"); dir.mkdirs(); return dir; }
 
     private void rememberPosition() {
-        File positionFile = currentFile == null ? currentDraft : currentFile;
-        if (!"reader".equals(mode) || browser == null || positionFile == null) return;
+        if (!"reader".equals(mode) || browser == null || currentFile == null) return;
         float range = browser.getContentHeight() * browser.getScale() - browser.getHeight();
         float ratio = range <= dp(2) ? 0 : Math.max(0, Math.min(1, browser.getScrollY() / range));
-        getPreferences(0).edit().putFloat("position:" + positionFile.getName(), ratio).apply();
+        getPreferences(0).edit().putFloat("position:" + currentFile.getName(), ratio).apply();
     }
 
     @Override protected void onPause() {
@@ -926,7 +852,8 @@ public class MainActivity extends Activity {
         if (browser != null) { browser.resumeTimers(); browser.onResume(); }
     }
     @Override public void onBackPressed() {
-        if ("reader".equals(mode) && currentDraft != null && sourceBrowser != null) openOnline(document.optString("source"));
+        // Only the capture just made keeps its loaded page, so Back from it returns there.
+        if ("reader".equals(mode) && sourceBrowser != null) openOnline(document.optString("source"));
         else if ("online".equals(mode) && browser != null && browser.canGoBack()) browser.goBack();
         else if (!"library".equals(mode)) showLibrary();
         else super.onBackPressed();

@@ -10,10 +10,6 @@ import java.util.Base64;
 import org.json.JSONObject;
 
 final class DocumentFiles {
-    static JSONObject read(File file) throws Exception {
-        return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-    }
-
     static void writeAtomic(File file, String content) throws Exception {
         File temporary = File.createTempFile(file.getName() + ".", ".tmp", file.getParentFile());
         try {
@@ -36,7 +32,7 @@ final class DocumentFiles {
         writeAtomic(new File(file + ".meta"), ReaderDocument.summary(document).toString());
     }
 
-    /** A draft and the saved article it becomes share one name, so their images stay in one place. */
+    /** An article's images live in a folder named after it, beside the library folder. */
     static File images(File article) {
         File root = article.getParentFile().getParentFile();
         return new File(new File(root, "images"), article.getName().replaceFirst("\\.json$", ""));
@@ -54,31 +50,18 @@ final class DocumentFiles {
         removeUnusedImages(article.getParentFile().getParentFile(), article.getName());
     }
 
-    /** A capture interrupted before its draft was written leaves images that no article can reach. */
+    /** A capture interrupted before its article was written leaves images that no article can reach. */
     static void removeOrphanImages(File root) throws Exception {
         File[] folders = new File(root, "images").listFiles();
         if (folders != null) for (File folder : folders) removeUnusedImages(root, folder.getName() + ".json");
     }
 
     private static void removeUnusedImages(File root, String name) throws Exception {
-        // A draft left behind by an interrupted save still shares its images with the saved article.
-        if (new File(new File(root, "drafts"), name).exists() || new File(new File(root, "library"), name).exists()) return;
-        File images = images(new File(new File(root, "drafts"), name));
+        File article = new File(new File(root, "library"), name);
+        if (article.exists()) return;
+        File images = images(article);
         File[] files = images.listFiles();
         if (files != null) for (File image : files) Files.deleteIfExists(image.toPath());
         Files.deleteIfExists(images.toPath());
-    }
-
-    static File save(File draft, File library, JSONObject document) throws Exception {
-        File saved = new File(library, draft.getName());
-        writeAtomic(saved, document.toString());
-        try {
-            writeSummary(saved, document);
-        } catch (Exception ignored) { }
-        try {
-            Files.deleteIfExists(draft.toPath());
-            Files.deleteIfExists(new File(draft + ".meta").toPath());
-        } catch (Exception ignored) { }
-        return saved;
     }
 }
