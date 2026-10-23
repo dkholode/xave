@@ -21,6 +21,29 @@ final class ReaderDocument {
     private static final Pattern THREAD_TITLE = Pattern.compile("@([A-Za-z0-9_]{1,15}) · (\\d+) posts?");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\[(.+)\\]", Pattern.DOTALL);
 
+    /** Reading styles shared by the screen, print, and exported files. */
+    private static final String STYLE = ""
+        + "body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}"
+        + "h1{font-size:1.25em;line-height:1.25;margin:0 0 6px}"
+        + "h2{font-size:1.15em}"
+        + "h3,h4,h5,h6{font-size:1.05em}"
+        + "p{white-space:pre-wrap;margin:.8em 0}"
+        + "h2,h3,h4,h5,h6{break-after:avoid}"
+        + "img{max-width:100%;height:auto}"
+        + "pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}"
+        + "figcaption{font:15px/1.5 sans-serif}"
+        + ".byline{font:15px/1.4 sans-serif;opacity:.65;margin:0 0 22px}"
+        + ".byline a{color:inherit}"
+        + ".post-meta{font:14px/1.4 sans-serif;margin:0 0 6px;break-after:avoid}"
+        + ".post-meta a{display:flex;justify-content:space-between;color:inherit;text-decoration:none;opacity:.6}"
+        + ".note{font:15px/1.4 sans-serif;white-space:normal;border:1px solid;border-radius:8px;padding:8px 12px;opacity:.7}"
+        + ".list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}"
+        + "blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}"
+        + "a{color:#000;text-decoration:underline}"
+        + "hr{border:0;border-top:1px solid #000;opacity:.3;margin:24px 0}"
+        + "figure{margin:16px 0}"
+        + ".print-info{font:11px/1.4 sans-serif;margin-top:32px}";
+
     private static boolean genericTitle(String title) {
         return title == null || title.trim().isEmpty() || title.trim().matches("(?i)(conversation|post|article|home|x|twitter)(\\s*[/|]\\s*(x|twitter))?");
     }
@@ -201,7 +224,7 @@ final class ReaderDocument {
         String title = document.optString("title");
         Matcher thread = THREAD_TITLE.matcher(title);
         boolean isThread = thread.matches();
-        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'\"><title>" + escape(title) + "</title><style>body{color:#000;background:#fff;font:21px/1.55 Georgia,serif;margin:14px 16px;overflow-wrap:anywhere}h1{font-size:1.25em;line-height:1.25;margin:0 0 6px}h2{font-size:1.15em}h3,h4,h5,h6{font-size:1.05em}p{white-space:pre-wrap;margin:.8em 0}h2,h3,h4,h5,h6{break-after:avoid}img{max-width:100%;height:auto}pre{white-space:pre-wrap;font-size:.8em;border:1px solid;padding:10px}figcaption{font:15px/1.5 sans-serif}.byline{font:15px/1.4 sans-serif;opacity:.65;margin:0 0 22px}.byline a{color:inherit}.post-meta{font:14px/1.4 sans-serif;margin:0 0 6px;break-after:avoid}.post-meta a{display:flex;justify-content:space-between;color:inherit;text-decoration:none;opacity:.6}.note{font:15px/1.4 sans-serif;white-space:normal;border:1px solid;border-radius:8px;padding:8px 12px;opacity:.7}.list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}a{color:#000;text-decoration:underline}hr{border:0;border-top:1px solid #000;opacity:.3;margin:24px 0}figure{margin:16px 0}.print-info{font:11px/1.4 sans-serif;margin-top:32px}" + (export ? "" : ".print-info{display:none}@media print{.print-info{display:block}}") + (dark ? "@media screen{body{color:#eee;background:#000}a{color:#eee}hr{border-top-color:#eee}}" : "") + "</style></head><body>");
+        StringBuilder html = new StringBuilder("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data: 'self'; style-src 'unsafe-inline'\"><title>" + escape(title) + "</title><style>" + STYLE + (export ? "" : ".print-info{display:none}@media print{.print-info{display:block}}") + (dark ? "@media screen{body{color:#eee;background:#000}a{color:#eee}hr{border-top-color:#eee}}" : "") + "</style></head><body>");
         String source = document.optString("source");
         String open = webUrl(source) ? "<a href=\"" + escape(source) + "\">Open on X</a>" : "";
         String byline;

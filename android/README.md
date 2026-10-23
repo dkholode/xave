@@ -35,7 +35,8 @@ uninstalling the previous app, which removes its saved library.
 
 ## Tests
 
-Renderer and storage tests run on your computer, without a device:
+Renderer, storage, and image download tests run on your computer, without a
+device:
 
 ```bash
 ./gradlew test

@@ -37,13 +37,10 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.text.DateFormat;
@@ -54,13 +51,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -100,7 +92,7 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         zoom = getPreferences(0).getInt("zoom", 100);
         try (InputStream in = getAssets().open("capture.js")) {
-            collector = new String(readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
+            collector = new String(ImageDownloads.readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
         } catch (Exception e) { error("Cannot load capture tools."); return; }
         if (!orphansChecked) {
             orphansChecked = true;
@@ -518,7 +510,10 @@ public class MainActivity extends Activity {
                 status.setText("Downloading images for offline reading…");
                 captures.execute(() -> {
                     File file = new File(library(), UUID.randomUUID() + ".json");
-                    embedImages(doc, cookies, userAgent, token, DocumentFiles.images(file));
+                    ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file), () -> token != generation,
+                        (finished, count) -> runOnUiThread(() -> {
+                            if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
+                        }));
                     if (token != generation) {
                         try { DocumentFiles.delete(file); } catch (Exception ignored) { }
                         return;
@@ -538,77 +533,6 @@ public class MainActivity extends Activity {
                 });
             } catch (Exception e) { busy = false; error("Could not capture this page. Wait for it to load, then retry."); }
         });
-    }
-
-    /** Saves each image in the article's images folder; image blocks then refer to it by file name. */
-    private void embedImages(JSONObject doc, ArrayList<String> cookies, String userAgent, int token, File images) {
-        JSONArray blocks = doc.optJSONArray("blocks");
-        ArrayList<Integer> pictures = new ArrayList<>();
-        for (int i=0; i<blocks.length(); i++) if ("image".equals(blocks.optJSONObject(i).optString("kind"))) pictures.add(i);
-        int count = Math.min(40, pictures.size());
-        long deadline = android.os.SystemClock.elapsedRealtime() + 45000;
-        AtomicLong total = new AtomicLong();
-        AtomicInteger done = new AtomicInteger();
-        ArrayList<Callable<String>> downloads = new ArrayList<>();
-        if (count > 0) images.mkdirs();
-        for (int n=0; n<count; n++) {
-            int index = n;
-            JSONObject block = blocks.optJSONObject(pictures.get(n));
-            String cookie = cookies.get(pictures.get(n));
-            downloads.add(() -> {
-                try { return token == generation ? download(block.optString("url"), cookie, userAgent, new File(images, String.valueOf(index)), total, deadline) : null; }
-                catch (Exception e) { return null; }
-                finally {
-                    int finished = done.incrementAndGet();
-                    runOnUiThread(() -> { if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count); });
-                }
-            });
-        }
-        ExecutorService pool = Executors.newFixedThreadPool(3);
-        try {
-            List<Future<String>> results = pool.invokeAll(downloads, 45, TimeUnit.SECONDS);
-            for (int n=0; n<count; n++) {
-                try {
-                    String name = results.get(n).get();
-                    if (name != null) blocks.getJSONObject(pictures.get(n)).put("file", name);
-                } catch (Exception ignored) { }
-            }
-        } catch (InterruptedException ignored) { }
-        finally { pool.shutdownNow(); }
-        // An inline image is now a file or a placeholder, so its payload need not stay in the article.
-        for (int i : pictures) if (blocks.optJSONObject(i).optString("url").startsWith("data:")) blocks.optJSONObject(i).remove("url");
-    }
-
-    /** Returns the saved file name, which is the given base name plus the image type's extension. */
-    private static String download(String link, String cookie, String userAgent, File base, AtomicLong total, long deadline) throws Exception {
-        String type;
-        byte[] bytes;
-        Matcher inline = Pattern.compile("data:(image/[a-z]+);base64,([A-Za-z0-9+/=]+)").matcher(link);
-        if (inline.matches()) {
-            type = inline.group(1);
-            bytes = java.util.Base64.getDecoder().decode(inline.group(2));
-            if (bytes.length > 4 * 1024 * 1024) throw new Exception("Resource exceeds size limit");
-        } else {
-            if (!ReaderDocument.webUrl(link) || !link.startsWith("https://")) throw new Exception("Unsupported image URL");
-            HttpURLConnection connection = (HttpURLConnection)new URL(link).openConnection();
-            try {
-                connection.setConnectTimeout(7000); connection.setReadTimeout(7000);
-                // Redirects fail visibly rather than forwarding site cookies to another host.
-                connection.setInstanceFollowRedirects(false);
-                connection.setRequestProperty("User-Agent", userAgent);
-                if (cookie != null) connection.setRequestProperty("Cookie", cookie);
-                if (connection.getResponseCode() != 200) throw new Exception("Image HTTP error");
-                type = connection.getContentType();
-                if (ReaderDocument.imageExtension(type) == null) throw new Exception("Unsupported image format");
-                try (InputStream in = connection.getInputStream()) { bytes = readLimited(in, 4 * 1024 * 1024, deadline); }
-            } finally { connection.disconnect(); }
-        }
-        String extension = ReaderDocument.imageExtension(type);
-        if (extension == null) throw new Exception("Unsupported image format");
-        if (total.addAndGet(bytes.length) > 16 * 1024 * 1024) throw new Exception("Image limit");
-        File file = new File(base + "." + extension);
-        Files.write(file.toPath(), bytes);
-        return file.getName();
     }
 
     /** Without this, a crashed or memory-killed page renderer would take the whole app down with it. */
@@ -863,18 +787,5 @@ public class MainActivity extends Activity {
         // Background work can finish after this screen is gone, and a dialog then would crash.
         if (isFinishing() || isDestroyed()) return;
         new AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show();
-    }
-
-    /** The deadline bounds a server that trickles bytes, which the per-read timeout alone does not. */
-    static byte[] readLimited(InputStream in, int limit, long deadline) throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int n;
-        while ((n = in.read(buffer)) != -1) {
-            if (out.size() + n > limit) throw new Exception("Resource exceeds size limit");
-            if (Thread.interrupted() || android.os.SystemClock.elapsedRealtime() > deadline) throw new Exception("Download stopped");
-            out.write(buffer, 0, n);
-        }
-        return out.toByteArray();
     }
 }
