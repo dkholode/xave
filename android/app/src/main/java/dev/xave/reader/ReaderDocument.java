@@ -21,7 +21,7 @@ final class ReaderDocument {
     private static final Pattern THREAD_TITLE = Pattern.compile("@([A-Za-z0-9_]{1,15}) · (\\d+) posts?");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\[(.+)\\]", Pattern.DOTALL);
 
-    static boolean genericTitle(String title) {
+    private static boolean genericTitle(String title) {
         return title == null || title.trim().isEmpty() || title.trim().matches("(?i)(conversation|post|article|home|x|twitter)(\\s*[/|]\\s*(x|twitter))?");
     }
 
@@ -29,6 +29,7 @@ final class ReaderDocument {
         return host != null && host.matches("(?i)(.*\\.)?(x|twitter)\\.com");
     }
 
+    /** X sometimes names an Article's page "Conversation"; the first line after the author's handle reads better. */
     static String savedTitle(JSONObject document) {
         String title = document.optString("title").trim();
         if (!genericTitle(title)) {
@@ -61,7 +62,7 @@ final class ReaderDocument {
             return new JSONObject().put("title", firstPost(document)).put("detail", thread.group());
         }
         String handle = handle(document.optString("source"));
-        return new JSONObject().put("title", savedTitle(document)).put("detail", handle.isEmpty() ? "Article" : "@" + handle + " · Article");
+        return new JSONObject().put("title", document.optString("title")).put("detail", handle.isEmpty() ? "Article" : "@" + handle + " · Article");
     }
 
     /** The confirmation shown once a capture is saved, such as "Saved 6 posts by @demo_dev". */
@@ -279,9 +280,7 @@ final class ReaderDocument {
                 break;
             case "image":
                 text = escape(block.optString("text"));
-                String data = block.optString("data");
-                String src = imageFile(block.optString("file")) ? image.apply(block.optString("file"))
-                    : data.matches("data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\\r\\n]+") ? data : null;
+                String src = imageFile(block.optString("file")) ? image.apply(block.optString("file")) : null;
                 if (src != null) {
                     html.append("<figure><img src=\"").append(src).append("\" alt=\"").append(text).append("\">");
                     if (!text.isEmpty() && !"Image".equals(text)) {

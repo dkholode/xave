@@ -68,7 +68,7 @@ public final class ReaderDocumentTest {
             .put(new JSONObject().put("kind", "text").put("runs", new JSONArray()
                 .put(new JSONObject().put("text", "<img src=x onerror=alert(1)>").put("bold", true).put("url", "javascript:alert(1)"))
                 .put(new JSONObject().put("text", "private").put("url", "https://name:secret@example.org/"))))
-            .put(new JSONObject().put("kind", "image").put("data", "https://example.org/tracking.png").put("text", "\" onerror=alert(1)")));
+            .put(new JSONObject().put("kind", "image").put("url", "https://example.org/tracking.png").put("text", "\" onerror=alert(1)")));
         String safe = ReaderDocument.html(hostile, false, name -> null);
         assertTrue("Active content survived", !safe.contains("<script>") && !safe.contains("javascript:") && !safe.contains("src=\"https://"));
         assertFalse("Credential link survived", safe.contains("href=\"https://name:"));
@@ -115,6 +115,13 @@ public final class ReaderDocumentTest {
         JSONObject articleRow = ReaderDocument.summary(new JSONObject().put("title", "Why e-ink finally works").put("source", "https://x.com/bob/status/9"));
         assertEquals("Why e-ink finally works", articleRow.getString("title"));
         assertEquals("@bob · Article", articleRow.getString("detail"));
+    }
+
+    @Test public void genericArticleTitleIsReplacedByTheLineAfterTheAuthorsHandle() throws Exception {
+        JSONObject conversation = new JSONObject().put("title", "Conversation").put("source", "https://x.com/bob/status/9")
+            .put("blocks", new JSONArray().put(text("@bob")).put(text("Why e-ink finally works for reading")));
+        assertEquals("Why e-ink finally works for reading", ReaderDocument.savedTitle(conversation));
+        assertEquals("A calmer offline reading experience", ReaderDocument.savedTitle(article()));
     }
 
     @Test public void darkReadingColorsApplyOnScreenWhilePrintStaysLight() throws Exception {

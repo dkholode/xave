@@ -274,7 +274,6 @@ public class MainActivity extends Activity {
         boolean repair = false;
         try {
             summary = new JSONObject(new String(Files.readAllBytes(new File(file + ".meta").toPath()), StandardCharsets.UTF_8));
-            repair = !summary.has("detail") || summary.optString("title").trim().isEmpty();
         } catch (Exception e) { summary = new JSONObject(); repair = true; }
         String title = summary.optString("title", "Untitled");
         LinearLayout row = new LinearLayout(this);
@@ -288,7 +287,7 @@ public class MainActivity extends Activity {
         row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
         entries.addView(row);
         divider(entries);
-        if (repair || ReaderDocument.genericTitle(title)) {
+        if (repair) {
             int token = generation;
             io.execute(() -> {
                 try {
@@ -397,24 +396,7 @@ public class MainActivity extends Activity {
     }
 
     private JSONObject readSavedDocument(File file) throws Exception {
-        byte[] original = Files.readAllBytes(file.toPath());
-        JSONObject doc = new JSONObject(new String(original, StandardCharsets.UTF_8));
-        String title = ReaderDocument.savedTitle(doc);
-        if (!title.equals(doc.optString("title"))) {
-            doc.put("title", title);
-            try {
-                File backup = new File(file + ".title-backup");
-                if (!backup.exists()) Files.write(backup.toPath(), original, java.nio.file.StandardOpenOption.CREATE_NEW);
-                long modified = file.lastModified();
-                writeAtomic(file, doc.toString());
-                file.setLastModified(modified);
-                writeSummary(file, doc);
-            } catch (Exception e) {
-                // A metadata repair must not prevent reading an otherwise valid saved article.
-                android.util.Log.w("Xave", "Could not persist the improved article title", e);
-            }
-        }
-        return doc;
+        return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
     }
 
     private void writeSummary(File file, JSONObject doc) throws Exception {
@@ -520,6 +502,7 @@ public class MainActivity extends Activity {
                 Object decoded = new JSONTokener(encoded).nextValue();
                 JSONObject doc = new JSONObject((String)decoded);
                 if (doc.has("error")) { busy = false; error(doc.getString("error")); return; }
+                doc.put("title", ReaderDocument.savedTitle(doc));
                 doc.put("schemaVersion", 2);
                 doc.put("savedAt", DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date()));
                 JSONArray blocks = doc.getJSONArray("blocks");
