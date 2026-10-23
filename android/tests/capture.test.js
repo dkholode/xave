@@ -115,6 +115,20 @@ test('Anonymous X refuses an article without a post identity', () => {
   const f = fixture('<article><div dir="auto" class="whitespace-pre-wrap">Unidentified post</div></article>', `https://x.com/alice/status/${root}`);
   assert(!!f.capture().error, 'Captured unidentified content'); f.close();
 });
+test('Anonymous X status pages capture an inline X Article instead of its empty post text', () => {
+  const f = fixture(`<main><article><div dir="auto" class="whitespace-pre-wrap"></div><div><div data-article-part="cover"><img src="https://pbs.twimg.com/media/cover.jpg"></div><h1 data-article-part="title">What is a harness?</h1><div data-article-part="byline">6 min read</div><div data-article-part="body"><style>.x{}</style><div style="display:contents"><p>${paragraph}</p><h3>Humans use interfaces</h3><ul><li value="1">First point</li></ul></div></div></div><a href="https://m.x.com/alice/status/${root}?launch_app_store=true&ct=engagement_view_post">7:16 PM · Oct 22, 2026</a><div data-engagement-action="like">4.1K</div></article></main>`, `https://x.com/alice/status/${root}`);
+  assert(f.summary().article === true, 'Did not recognize the inline X Article');
+  const doc = f.capture();
+  assert(doc.title === 'What is a harness?', 'Wrong title: ' + doc.title);
+  assert(doc.blocks.some(b => b.kind === 'heading' && b.text === 'Humans use interfaces'), 'Lost the article heading');
+  assert(doc.blocks.some(b => b.kind === 'listItem' && b.text === 'First point'), 'Lost the article list');
+  assert(!/6 min read|4\.1K|\.x\{\}/.test(JSON.stringify(doc.blocks)), 'Captured page chrome'); f.close();
+});
+test('X refuses a post with no readable text or images instead of saving only its timestamp', () => {
+  const f = fixture(`<main><article><div dir="auto" class="whitespace-pre-wrap"></div><a href="https://m.x.com/alice/status/${root}?launch_app_store=true&ct=engagement_view_post">7:16 PM · Oct 22, 2026</a></article></main>`, `https://x.com/alice/status/${root}`);
+  assert(f.summary().posts === 0, 'Counted an empty post as loaded');
+  assert(!!f.capture().error, 'Saved a capture with no content'); f.close();
+});
 
 test('Inline text, emphasis, and links stay in one paragraph in DIV-based articles', () => {
   const f = xArticle('Rich text', `<p>${paragraph}</p><div>Read <strong>this important</strong> sentence with <a href="/reference">a reference</a> here.</div>`);
