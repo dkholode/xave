@@ -48,3 +48,9 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 }
+
+dependencies {
+    // Unit tests run on the JVM, where Android's own org.json is only a stub.
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20260814'
+}

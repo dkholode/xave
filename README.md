@@ -1,9 +1,9 @@
 # Xave
 
-Xave is an Android app for saving web articles and X posts to read offline.
-Open a link in its built-in browser, capture what it loaded, and keep a clean,
-script-free copy on your device. It runs on Android 8 or later, including phones,
-tablets, and e-ink devices such as the Boox Palma.
+Xave is an Android app for saving X posts, threads, and Articles to read
+offline. Open a post in its built-in browser, capture what it loaded, and keep a
+clean, script-free copy on your device. It runs on Android 8 or later, including
+phones, tablets, and e-ink devices such as the Boox Palma.
 
 <p>
   <img src="screenshots/library-light.png" width="240" alt="Library screen">
@@ -20,9 +20,9 @@ see [android/README.md](android/README.md).
 
 ## Use
 
-1. Paste an HTTPS link, or use another app's Share action to send a link to Xave.
-2. Let the page load. Sign in if the site requires it, and scroll to load the
-   content you want to keep. On X, expand long posts and scroll the thread.
+1. Paste a link to an X post or Article, or use Share in the X app and pick Xave.
+2. Let the page load. Sign in to X if it asks, then expand long posts and
+   scroll the thread to load the posts you want to keep.
 3. Tap **Capture** once the top bar shows the posts you want as loaded. Xave
    saves it right away and opens it. Replies from other accounts aren't saved.
 4. If something is missing, press Back to return to the loaded page, scroll
@@ -41,25 +41,28 @@ see [android/README.md](android/README.md).
 
 - X threads contain the loaded posts by the linked post's author. Xave does not
   verify reply relationships or guarantee a complete thread. Check each capture.
-- Open the full reading view before capturing an X Article. Article extraction
-  is heuristic, and unusual page layouts may be incomplete.
+- Open the full reading view before capturing an X Article. Unusual Article
+  layouts may capture incompletely.
 - Loaded images are saved within size and time limits. Missing images are
   marked. Video, audio, and interactive widgets are not downloaded.
 - Capturing needs internet access. Saved reading blocks scripts and network
-  loads. Opening a source link takes you back online.
+  loads. Opening a link to X takes you back online, and other links open in
+  your browser.
 
 ## Privacy
 
-Your library and browser sessions stay on the device. Xave has no account,
-server, analytics, or ads. Uninstalling the app or clearing its data deletes
-the library, so export anything you want to keep separately.
+Your library and X sign-in stay on your device. Xave has no account, server,
+analytics, or ads, and it doesn't use cloud backup. On Android 12 and later,
+Android's transfer to a new phone copies your library but not your sign-in.
+Uninstalling the app or clearing its data deletes the library, so export
+anything you want to keep separately.
 
 Xave saves pages you can already open in your own browser, for your personal
-reading. Respect content owners' rights and each site's terms.
+reading. Respect content owners' rights and X's terms.
 
 ## Contributing
 
-Bug reports, site-capture fixes, and pull requests are welcome. See
+Bug reports, X capture fixes, and pull requests are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md). To report a security problem, see
 [SECURITY.md](SECURITY.md).
 

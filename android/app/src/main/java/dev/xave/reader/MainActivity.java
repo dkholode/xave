@@ -18,6 +18,7 @@ import android.print.PrintManager;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
@@ -27,6 +28,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -37,13 +39,10 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.text.DateFormat;
@@ -54,13 +53,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -100,7 +94,7 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         zoom = getPreferences(0).getInt("zoom", 100);
         try (InputStream in = getAssets().open("capture.js")) {
-            collector = new String(readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
+            collector = new String(ImageDownloads.readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
         } catch (Exception e) { error("Cannot load capture tools."); return; }
         if (!orphansChecked) {
             orphansChecked = true;
@@ -191,14 +185,27 @@ public class MainActivity extends Activity {
         b.setTextColor(filled ? bg() : fg()); b.setBackground(outline(filled));
         b.setGravity(Gravity.CENTER); b.setMinHeight(dp(44)); b.setPadding(dp(20), 0, dp(20), 0);
         b.setOnClickListener(v -> action.run());
+        announceAsButton(b);
         return b;
     }
 
-    private TextView icon(String glyph, View.OnClickListener action) {
+    private TextView icon(String glyph, String description, View.OnClickListener action) {
         TextView b = label(glyph, 30);
         b.setGravity(Gravity.CENTER); b.setMinWidth(dp(48)); b.setMinHeight(dp(48));
+        b.setContentDescription(description);
         b.setOnClickListener(action);
+        announceAsButton(b);
         return b;
+    }
+
+    /** Pills and icons are styled TextViews, so TalkBack would not otherwise say they are buttons. */
+    private static void announceAsButton(View view) {
+        view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(Button.class.getName());
+            }
+        });
     }
 
     private LinearLayout bar() {
@@ -241,7 +248,7 @@ public class MainActivity extends Activity {
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(icon("⋮", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
+        top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
             if (which == 0) showSelection(); else chooseTheme();
         })));
         LinearLayout field = bar();
@@ -274,7 +281,6 @@ public class MainActivity extends Activity {
         boolean repair = false;
         try {
             summary = new JSONObject(new String(Files.readAllBytes(new File(file + ".meta").toPath()), StandardCharsets.UTF_8));
-            repair = !summary.has("detail") || summary.optString("title").trim().isEmpty();
         } catch (Exception e) { summary = new JSONObject(); repair = true; }
         String title = summary.optString("title", "Untitled");
         LinearLayout row = new LinearLayout(this);
@@ -288,7 +294,7 @@ public class MainActivity extends Activity {
         row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
         entries.addView(row);
         divider(entries);
-        if (repair || ReaderDocument.genericTitle(title)) {
+        if (repair) {
             int token = generation;
             io.execute(() -> {
                 try {
@@ -313,7 +319,7 @@ public class MainActivity extends Activity {
         layout("delete"); document = null; currentFile = null;
         selected.clear();
         LinearLayout top = bar();
-        top.addView(icon("‹", v -> showLibrary()));
+        top.addView(icon("‹", "Back to library", v -> showLibrary()));
         TextView heading = label("Select to delete", 19);
         heading.setTypeface(Typeface.DEFAULT_BOLD);
         top.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
@@ -397,24 +403,7 @@ public class MainActivity extends Activity {
     }
 
     private JSONObject readSavedDocument(File file) throws Exception {
-        byte[] original = Files.readAllBytes(file.toPath());
-        JSONObject doc = new JSONObject(new String(original, StandardCharsets.UTF_8));
-        String title = ReaderDocument.savedTitle(doc);
-        if (!title.equals(doc.optString("title"))) {
-            doc.put("title", title);
-            try {
-                File backup = new File(file + ".title-backup");
-                if (!backup.exists()) Files.write(backup.toPath(), original, java.nio.file.StandardOpenOption.CREATE_NEW);
-                long modified = file.lastModified();
-                writeAtomic(file, doc.toString());
-                file.setLastModified(modified);
-                writeSummary(file, doc);
-            } catch (Exception e) {
-                // A metadata repair must not prevent reading an otherwise valid saved article.
-                android.util.Log.w("Xave", "Could not persist the improved article title", e);
-            }
-        }
-        return doc;
+        return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
     }
 
     private void writeSummary(File file, JSONObject doc) throws Exception {
@@ -428,8 +417,9 @@ public class MainActivity extends Activity {
     private void openOnline(String input) {
         String url = input.trim();
         if (!url.contains("://")) url = "https://" + url;
-        if (!ReaderDocument.webUrl(url) || !"https".equalsIgnoreCase(Uri.parse(url).getScheme())) {
-            error("Enter a valid https:// web link."); return;
+        if (!ReaderDocument.webUrl(url) || !"https".equalsIgnoreCase(Uri.parse(url).getScheme())
+                || !ReaderDocument.xHost(Uri.parse(url).getHost())) {
+            error("Paste a link to an X post or Article, such as https://x.com/…/status/…"); return;
         }
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
@@ -437,7 +427,7 @@ public class MainActivity extends Activity {
         layout("online"); document = null; currentFile = null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
         LinearLayout top = bar();
-        top.addView(icon("‹", v -> showLibrary()));
+        top.addView(icon("‹", "Back to library", v -> showLibrary()));
         status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
         top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(pill("Capture", true, this::capture));
@@ -519,6 +509,7 @@ public class MainActivity extends Activity {
                 Object decoded = new JSONTokener(encoded).nextValue();
                 JSONObject doc = new JSONObject((String)decoded);
                 if (doc.has("error")) { busy = false; error(doc.getString("error")); return; }
+                doc.put("title", ReaderDocument.savedTitle(doc));
                 doc.put("schemaVersion", 2);
                 doc.put("savedAt", DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date()));
                 JSONArray blocks = doc.getJSONArray("blocks");
@@ -534,7 +525,10 @@ public class MainActivity extends Activity {
                 status.setText("Downloading images for offline reading…");
                 captures.execute(() -> {
                     File file = new File(library(), UUID.randomUUID() + ".json");
-                    embedImages(doc, cookies, userAgent, token, DocumentFiles.images(file));
+                    ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file), () -> token != generation,
+                        (finished, count) -> runOnUiThread(() -> {
+                            if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
+                        }));
                     if (token != generation) {
                         try { DocumentFiles.delete(file); } catch (Exception ignored) { }
                         return;
@@ -554,77 +548,6 @@ public class MainActivity extends Activity {
                 });
             } catch (Exception e) { busy = false; error("Could not capture this page. Wait for it to load, then retry."); }
         });
-    }
-
-    /** Saves each image in the article's images folder; image blocks then refer to it by file name. */
-    private void embedImages(JSONObject doc, ArrayList<String> cookies, String userAgent, int token, File images) {
-        JSONArray blocks = doc.optJSONArray("blocks");
-        ArrayList<Integer> pictures = new ArrayList<>();
-        for (int i=0; i<blocks.length(); i++) if ("image".equals(blocks.optJSONObject(i).optString("kind"))) pictures.add(i);
-        int count = Math.min(40, pictures.size());
-        long deadline = android.os.SystemClock.elapsedRealtime() + 45000;
-        AtomicLong total = new AtomicLong();
-        AtomicInteger done = new AtomicInteger();
-        ArrayList<Callable<String>> downloads = new ArrayList<>();
-        if (count > 0) images.mkdirs();
-        for (int n=0; n<count; n++) {
-            int index = n;
-            JSONObject block = blocks.optJSONObject(pictures.get(n));
-            String cookie = cookies.get(pictures.get(n));
-            downloads.add(() -> {
-                try { return token == generation ? download(block.optString("url"), cookie, userAgent, new File(images, String.valueOf(index)), total, deadline) : null; }
-                catch (Exception e) { return null; }
-                finally {
-                    int finished = done.incrementAndGet();
-                    runOnUiThread(() -> { if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count); });
-                }
-            });
-        }
-        ExecutorService pool = Executors.newFixedThreadPool(3);
-        try {
-            List<Future<String>> results = pool.invokeAll(downloads, 45, TimeUnit.SECONDS);
-            for (int n=0; n<count; n++) {
-                try {
-                    String name = results.get(n).get();
-                    if (name != null) blocks.getJSONObject(pictures.get(n)).put("file", name);
-                } catch (Exception ignored) { }
-            }
-        } catch (InterruptedException ignored) { }
-        finally { pool.shutdownNow(); }
-        // An inline image is now a file or a placeholder, so its payload need not stay in the article.
-        for (int i : pictures) if (blocks.optJSONObject(i).optString("url").startsWith("data:")) blocks.optJSONObject(i).remove("url");
-    }
-
-    /** Returns the saved file name, which is the given base name plus the image type's extension. */
-    private static String download(String link, String cookie, String userAgent, File base, AtomicLong total, long deadline) throws Exception {
-        String type;
-        byte[] bytes;
-        Matcher inline = Pattern.compile("data:(image/[a-z]+);base64,([A-Za-z0-9+/=]+)").matcher(link);
-        if (inline.matches()) {
-            type = inline.group(1);
-            bytes = java.util.Base64.getDecoder().decode(inline.group(2));
-            if (bytes.length > 4 * 1024 * 1024) throw new Exception("Resource exceeds size limit");
-        } else {
-            if (!ReaderDocument.webUrl(link) || !link.startsWith("https://")) throw new Exception("Unsupported image URL");
-            HttpURLConnection connection = (HttpURLConnection)new URL(link).openConnection();
-            try {
-                connection.setConnectTimeout(7000); connection.setReadTimeout(7000);
-                // Redirects fail visibly rather than forwarding site cookies to another host.
-                connection.setInstanceFollowRedirects(false);
-                connection.setRequestProperty("User-Agent", userAgent);
-                if (cookie != null) connection.setRequestProperty("Cookie", cookie);
-                if (connection.getResponseCode() != 200) throw new Exception("Image HTTP error");
-                type = connection.getContentType();
-                if (ReaderDocument.imageExtension(type) == null) throw new Exception("Unsupported image format");
-                try (InputStream in = connection.getInputStream()) { bytes = readLimited(in, 4 * 1024 * 1024, deadline); }
-            } finally { connection.disconnect(); }
-        }
-        String extension = ReaderDocument.imageExtension(type);
-        if (extension == null) throw new Exception("Unsupported image format");
-        if (total.addAndGet(bytes.length) > 16 * 1024 * 1024) throw new Exception("Image limit");
-        File file = new File(base + "." + extension);
-        Files.write(file.toPath(), bytes);
-        return file.getName();
     }
 
     /** Without this, a crashed or memory-killed page renderer would take the whole app down with it. */
@@ -655,13 +578,13 @@ public class MainActivity extends Activity {
         }
         layout("reader"); document = doc; currentFile = file;
         LinearLayout top = bar();
-        top.addView(icon("‹", v -> showLibrary()));
+        top.addView(icon("‹", "Back to library", v -> showLibrary()));
         // The save confirmation sits in the bar, clear of the text, and goes after 3 seconds or the first scroll.
         TextView saved = label(captured ? ReaderDocument.savedMessage(doc) : "", 14);
         saved.setTextColor(muted()); saved.setMaxLines(1); saved.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(saved, new LinearLayout.LayoutParams(0, -2, 1));
         if (captured) saved.postDelayed(() -> saved.setText(""), 3000);
-        top.addView(icon("⋮", this::readerOptions));
+        top.addView(icon("⋮", "More options", this::readerOptions));
         divider(screen);
         browser = new WebView(this);
         // Timers are global; a capture finishing in the background must not restart page scripts.
@@ -686,9 +609,12 @@ public class MainActivity extends Activity {
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String link = request.getUrl().toString();
-                if (ReaderDocument.webUrl(link)) new AlertDialog.Builder(MainActivity.this)
-                    .setMessage("Open this link online?\n" + link).setNegativeButton("Cancel", null)
-                    .setPositiveButton("Open", (d,w) -> openOnline(link)).show();
+                if (!ReaderDocument.webUrl(link)) return true;
+                // Xave can only capture X, so links elsewhere go to the device's browser.
+                boolean x = link.startsWith("https://") && ReaderDocument.xHost(request.getUrl().getHost());
+                new AlertDialog.Builder(MainActivity.this)
+                    .setMessage((x ? "Open this link online?\n" : "Open this link in your browser?\n") + link).setNegativeButton("Cancel", null)
+                    .setPositiveButton("Open", (d,w) -> { if (x) openOnline(link); else openInBrowser(link); }).show();
                 return true;
             }
             @Override public void onPageFinished(WebView view, String url) {
@@ -711,12 +637,21 @@ public class MainActivity extends Activity {
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         divider(screen);
         LinearLayout footer = bar(); footer.setPadding(0, dp(8), 0, dp(8));
-        footer.addView(pill("Prev", false, () -> browser.pageUp(false)));
+        TextView prev = pill("Prev", false, () -> browser.pageUp(false));
+        prev.setContentDescription("Previous page");
+        footer.addView(prev);
         readingProgress = label("0%", 16); readingProgress.setTypeface(Typeface.DEFAULT_BOLD);
         readingProgress.setGravity(Gravity.CENTER);
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
-        footer.addView(pill("Next", false, () -> browser.pageDown(false)));
+        TextView next = pill("Next", false, () -> browser.pageDown(false));
+        next.setContentDescription("Next page");
+        footer.addView(next);
         browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
+    }
+
+    private void openInBrowser(String link) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(link))); }
+        catch (android.content.ActivityNotFoundException e) { error("No browser is installed to open this link."); }
     }
 
     private void updateReadingProgress() {
@@ -734,8 +669,10 @@ public class MainActivity extends Activity {
                 sizes.setPadding(dp(20), dp(12), dp(20), 0);
                 LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, -2, 1);
                 half.setMargins(dp(6), 0, dp(6), 0);
-                sizes.addView(pill("A−", false, () -> changeZoom(-10)), half);
-                sizes.addView(pill("A+", false, () -> changeZoom(10)), half);
+                TextView smaller = pill("A−", false, () -> changeZoom(-10));
+                TextView larger = pill("A+", false, () -> changeZoom(10));
+                smaller.setContentDescription("Smaller text"); larger.setContentDescription("Larger text");
+                sizes.addView(smaller, half); sizes.addView(larger, half);
                 new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
             } else if (which == 1) chooseTheme();
             else if (which == 2) exportDocument();
@@ -871,18 +808,5 @@ public class MainActivity extends Activity {
         // Background work can finish after this screen is gone, and a dialog then would crash.
         if (isFinishing() || isDestroyed()) return;
         new AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK", null).show();
-    }
-
-    /** The deadline bounds a server that trickles bytes, which the per-read timeout alone does not. */
-    static byte[] readLimited(InputStream in, int limit, long deadline) throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int n;
-        while ((n = in.read(buffer)) != -1) {
-            if (out.size() + n > limit) throw new Exception("Resource exceeds size limit");
-            if (Thread.interrupted() || android.os.SystemClock.elapsedRealtime() > deadline) throw new Exception("Download stopped");
-            out.write(buffer, 0, n);
-        }
-        return out.toByteArray();
     }
 }

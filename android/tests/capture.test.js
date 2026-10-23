@@ -20,9 +20,11 @@ const paragraph = 'An article should remain readable without its navigation, ads
 const post = (who, id, text) => `<article data-testid="tweet"><div data-testid="User-Name">${who}</div><a href="https://x.com/${who}/status/${id}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">${text}</div></article>`;
 const root = '20000000000000000001';
 const reply = '20000000000000000002';
+// An X Article as it appears once its full reading view is open.
+const xArticle = (title, body) => fixture(`<main><h1>Conversation</h1><article data-testid="twitterArticleReadView"><div data-testid="twitter-article-title">${title}</div><div data-testid="twitterArticleRichTextView">${body}</div></article></main>`, `https://x.com/alice/status/${root}`);
 
-test('Blog headings, lists, and code survive; navigation and hidden text are excluded', () => {
-  const f = fixture(`<nav>Navigation junk</nav><article><h1>A useful article</h1><p>${paragraph}</p><h2>Details</h2><ul><li>First point</li></ul><pre>let x = 1;</pre><div hidden>Hidden junk</div><aside>Advert junk</aside><script type="application/json">Script junk</script></article>`);
+test('X Article headings, lists, and code survive; navigation and hidden text are excluded', () => {
+  const f = xArticle('A useful article', `<nav>Navigation junk</nav><p>${paragraph}</p><h2>Details</h2><ul><li>First point</li></ul><pre>let x = 1;</pre><div hidden>Hidden junk</div><aside>Advert junk</aside><script type="application/json">Script junk</script>`);
   const doc = f.capture();
   assert(doc.title === 'A useful article', 'Wrong title');
   assert(doc.blocks.some(b => b.kind === 'code' && b.text.includes('let x')), 'Lost code');
@@ -40,9 +42,11 @@ test('X Articles use their article title and content instead of Conversation or 
   assert(!text.includes('Conversation') && !text.includes('Outer page clutter') && !text.includes('825K views'), 'Captured page controls');
   f.close();
 });
-test('Short login/error pages produce an explicit capture error', () => {
-  const f = fixture('<main><h1>Sign in</h1><p>Please sign in first.</p></main>');
-  assert(!!f.capture().error, 'Login page was treated as an article'); f.close();
+test('Login pages and pages outside X produce an explicit capture error', () => {
+  const login = fixture('<main><h1>Sign in</h1><p>Please sign in first.</p></main>', 'https://x.com/i/flow/login');
+  assert(!!login.capture().error, 'Login page was treated as an article'); login.close();
+  const blog = fixture(`<article><h1>A blog post</h1><p>${paragraph}</p></article>`);
+  assert(!!blog.capture().error, 'Captured a page outside X'); blog.close();
 });
 test('X retains exact snowflake IDs and excludes replies by other authors', () => {
   const f = fixture(post('alice', reply, 'Second post') + post('bob', '20000000000000000003', 'Unrelated reply') + post('alice', root, 'First post'), `https://x.com/alice/status/${root}`);
@@ -113,22 +117,22 @@ test('Anonymous X refuses an article without a post identity', () => {
 });
 
 test('Inline text, emphasis, and links stay in one paragraph in DIV-based articles', () => {
-  const f = fixture(`<article><h1>Rich text</h1><p>${paragraph}</p><div>Read <strong>this important</strong> sentence with <a href="/reference">a reference</a> here.</div></article>`);
+  const f = xArticle('Rich text', `<p>${paragraph}</p><div>Read <strong>this important</strong> sentence with <a href="/reference">a reference</a> here.</div>`);
   const doc = f.capture();
   const block = doc.blocks.find(b => b.text === 'Read this important sentence with a reference here.');
   assert(!!block, 'Split one sentence into separate paragraphs');
   assert(block.runs.some(r => r.bold && r.text === 'this important'), 'Lost emphasis');
-  assert(block.runs.some(r => r.url === 'https://example.org/reference'), 'Lost or failed to resolve the inline link');
+  assert(block.runs.some(r => r.url === 'https://x.com/reference'), 'Lost or failed to resolve the inline link');
   f.close();
 });
 test('Excluded descendants inside paragraphs never leak into saved text', () => {
-  const f = fixture(`<article><h1>Clean article</h1><p>${paragraph}<span aria-hidden="true">HIDDEN_CONTROL</span><button>AD_CONTROL</button><span hidden>HIDDEN_ELEMENT</span><span style="display:none">CSS_HIDDEN</span> Visible ending.</p></article>`);
+  const f = xArticle('Clean article', `<p>${paragraph}<span aria-hidden="true">HIDDEN_CONTROL</span><button>AD_CONTROL</button><span hidden>HIDDEN_ELEMENT</span><span style="display:none">CSS_HIDDEN</span> Visible ending.</p>`);
   const text = JSON.stringify(f.capture().blocks);
   assert(!/HIDDEN_CONTROL|AD_CONTROL|HIDDEN_ELEMENT|CSS_HIDDEN/.test(text), 'Captured excluded paragraph descendants');
   assert(text.includes('Visible ending.'), 'Removed readable content'); f.close();
 });
 test('Numbered and nested lists, heading levels, quotes, and code indentation survive', () => {
-  const f = fixture(`<article><h1>Structure</h1><p>${paragraph}</p><h2>Section</h2><h3>Detail</h3><ol start="3"><li>First step<ul><li>Nested point</li></ul></li><li value="7">Second step</li></ol><blockquote>A useful quote.</blockquote><pre>  indented\n    further</pre></article>`);
+  const f = xArticle('Structure', `<p>${paragraph}</p><h2>Section</h2><h3>Detail</h3><ol start="3"><li>First step<ul><li>Nested point</li></ul></li><li value="7">Second step</li></ol><blockquote>A useful quote.</blockquote><pre>  indented\n    further</pre>`);
   const blocks = f.capture().blocks;
   assert(blocks.some(b => b.kind === 'heading' && b.level === 3 && b.text === 'Detail'), 'Lost heading hierarchy');
   assert(blocks.some(b => b.kind === 'listItem' && b.marker === '3.' && b.text === 'First step'), 'Lost ordered list start');
@@ -138,29 +142,23 @@ test('Numbered and nested lists, heading levels, quotes, and code indentation su
   assert(blocks.some(b => b.kind === 'code' && b.text.startsWith('  indented')), 'Trimmed code indentation'); f.close();
 });
 test('Article title is emitted once rather than repeated as a body heading', () => {
-  const f = fixture(`<article><h1>Unique title</h1><p>${paragraph}</p><h2>Another heading</h2></article>`);
+  const f = xArticle('Unique title', `<h1>Unique title</h1><p>${paragraph}</p><h2>Another heading</h2>`);
   const doc = f.capture();
   assert(doc.title === 'Unique title', 'Wrong title');
   assert(!doc.blocks.some(b => b.kind === 'heading' && b.text === doc.title), 'Duplicated title'); f.close();
 });
-test('Semantic article is preferred over a larger surrounding discussion region', () => {
-  const f = fixture(`<article><h1>The article</h1><p>REAL_ARTICLE ${paragraph}</p></article><main><h1>Discussion</h1><p>${'UNRELATED_COMMENT '.repeat(150)}</p></main>`);
-  const doc = f.capture();
-  assert(doc.title === 'The article' && JSON.stringify(doc.blocks).includes('REAL_ARTICLE'), 'Chose discussion instead of article');
-  assert(!JSON.stringify(doc.blocks).includes('UNRELATED_COMMENT'), 'Included unrelated discussion'); f.close();
-});
 test('Active and credential-bearing inline links are kept as inert text', () => {
-  const f = fixture(`<article><h1>Safe links</h1><p>${paragraph}<a href="javascript:alert(1)">Unsafe JS</a> <a href="https://name:secret@example.org/">Private credentials</a></p></article>`);
+  const f = xArticle('Safe links', `<p>${paragraph}<a href="javascript:alert(1)">Unsafe JS</a> <a href="https://name:secret@example.org/">Private credentials</a></p>`);
   const doc = f.capture();
   assert(doc.blocks.some(b => b.text.includes('Unsafe JS')), 'Lost the visible link text');
   assert(!doc.blocks.flatMap(b => b.runs || []).some(r => r.url), 'Retained an unsafe link'); f.close();
 });
 test('Explicit line breaks stay inside their paragraph', () => {
-  const f = fixture(`<article><h1>Line breaks</h1><p>${paragraph}</p><div>Before<br>After</div></article>`);
+  const f = xArticle('Line breaks', `<p>${paragraph}</p><div>Before<br>After</div>`);
   assert(f.capture().blocks.some(b => b.text === 'Before\nAfter'), 'Lost the explicit line break'); f.close();
 });
 test('Styled spans retain emphasis without copying source styles or inventing anchor links', () => {
-  const f = fixture(`<article><h1>Styled spans</h1><p>${paragraph}</p><div>A <span style="font-weight:700">bold</span> and <span style="font-style:italic">italic</span> sentence with <a name="section">an anchor</a>.</div></article>`);
+  const f = xArticle('Styled spans', `<p>${paragraph}</p><div>A <span style="font-weight:700">bold</span> and <span style="font-style:italic">italic</span> sentence with <a name="section">an anchor</a>.</div>`);
   const block = f.capture().blocks.find(b => b.text === 'A bold and italic sentence with an anchor.');
   assert(block && block.runs.some(r => r.bold && r.text === 'bold'), 'Lost CSS-based emphasis');
   assert(block.runs.some(r => r.italic && r.text === 'italic'), 'Lost CSS-based italics');

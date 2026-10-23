@@ -46,7 +46,6 @@ final class DocumentFiles {
     static void delete(File article) throws Exception {
         Files.deleteIfExists(article.toPath());
         Files.deleteIfExists(new File(article + ".meta").toPath());
-        Files.deleteIfExists(new File(article + ".title-backup").toPath());
         removeUnusedImages(article.getParentFile().getParentFile(), article.getName());
     }
 
