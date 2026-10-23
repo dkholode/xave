@@ -1,0 +1,20 @@
+name: Capture problem
+description: A post, thread, or Article that saved badly
+body:
+  - type: input
+    attributes:
+      label: Post URL
+      description: Only if the post is public.
+  - type: textarea
+    attributes:
+      label: What was missing or wrong
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Device and Android version
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: Don't include links or screenshots that show private content or account details.
