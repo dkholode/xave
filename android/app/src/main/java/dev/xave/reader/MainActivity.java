@@ -18,6 +18,7 @@ import android.print.PrintManager;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
@@ -27,6 +28,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -183,14 +185,27 @@ public class MainActivity extends Activity {
         b.setTextColor(filled ? bg() : fg()); b.setBackground(outline(filled));
         b.setGravity(Gravity.CENTER); b.setMinHeight(dp(44)); b.setPadding(dp(20), 0, dp(20), 0);
         b.setOnClickListener(v -> action.run());
+        announceAsButton(b);
         return b;
     }
 
-    private TextView icon(String glyph, View.OnClickListener action) {
+    private TextView icon(String glyph, String description, View.OnClickListener action) {
         TextView b = label(glyph, 30);
         b.setGravity(Gravity.CENTER); b.setMinWidth(dp(48)); b.setMinHeight(dp(48));
+        b.setContentDescription(description);
         b.setOnClickListener(action);
+        announceAsButton(b);
         return b;
+    }
+
+    /** Pills and icons are styled TextViews, so TalkBack would not otherwise say they are buttons. */
+    private static void announceAsButton(View view) {
+        view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(Button.class.getName());
+            }
+        });
     }
 
     private LinearLayout bar() {
@@ -233,7 +248,7 @@ public class MainActivity extends Activity {
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(icon("⋮", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
+        top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Delete", "Theme"}, which -> {
             if (which == 0) showSelection(); else chooseTheme();
         })));
         LinearLayout field = bar();
@@ -304,7 +319,7 @@ public class MainActivity extends Activity {
         layout("delete"); document = null; currentFile = null;
         selected.clear();
         LinearLayout top = bar();
-        top.addView(icon("‹", v -> showLibrary()));
+        top.addView(icon("‹", "Back to library", v -> showLibrary()));
         TextView heading = label("Select to delete", 19);
         heading.setTypeface(Typeface.DEFAULT_BOLD);
         top.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
@@ -412,7 +427,7 @@ public class MainActivity extends Activity {
         layout("online"); document = null; currentFile = null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
         LinearLayout top = bar();
-        top.addView(icon("‹", v -> showLibrary()));
+        top.addView(icon("‹", "Back to library", v -> showLibrary()));
         status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
         top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         top.addView(pill("Capture", true, this::capture));
@@ -563,13 +578,13 @@ public class MainActivity extends Activity {
         }
         layout("reader"); document = doc; currentFile = file;
         LinearLayout top = bar();
-        top.addView(icon("‹", v -> showLibrary()));
+        top.addView(icon("‹", "Back to library", v -> showLibrary()));
         // The save confirmation sits in the bar, clear of the text, and goes after 3 seconds or the first scroll.
         TextView saved = label(captured ? ReaderDocument.savedMessage(doc) : "", 14);
         saved.setTextColor(muted()); saved.setMaxLines(1); saved.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(saved, new LinearLayout.LayoutParams(0, -2, 1));
         if (captured) saved.postDelayed(() -> saved.setText(""), 3000);
-        top.addView(icon("⋮", this::readerOptions));
+        top.addView(icon("⋮", "More options", this::readerOptions));
         divider(screen);
         browser = new WebView(this);
         // Timers are global; a capture finishing in the background must not restart page scripts.
@@ -622,11 +637,15 @@ public class MainActivity extends Activity {
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         divider(screen);
         LinearLayout footer = bar(); footer.setPadding(0, dp(8), 0, dp(8));
-        footer.addView(pill("Prev", false, () -> browser.pageUp(false)));
+        TextView prev = pill("Prev", false, () -> browser.pageUp(false));
+        prev.setContentDescription("Previous page");
+        footer.addView(prev);
         readingProgress = label("0%", 16); readingProgress.setTypeface(Typeface.DEFAULT_BOLD);
         readingProgress.setGravity(Gravity.CENTER);
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
-        footer.addView(pill("Next", false, () -> browser.pageDown(false)));
+        TextView next = pill("Next", false, () -> browser.pageDown(false));
+        next.setContentDescription("Next page");
+        footer.addView(next);
         browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
     }
 
@@ -650,8 +669,10 @@ public class MainActivity extends Activity {
                 sizes.setPadding(dp(20), dp(12), dp(20), 0);
                 LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, -2, 1);
                 half.setMargins(dp(6), 0, dp(6), 0);
-                sizes.addView(pill("A−", false, () -> changeZoom(-10)), half);
-                sizes.addView(pill("A+", false, () -> changeZoom(10)), half);
+                TextView smaller = pill("A−", false, () -> changeZoom(-10));
+                TextView larger = pill("A+", false, () -> changeZoom(10));
+                smaller.setContentDescription("Smaller text"); larger.setContentDescription("Larger text");
+                sizes.addView(smaller, half); sizes.addView(larger, half);
                 new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
             } else if (which == 1) chooseTheme();
             else if (which == 2) exportDocument();
