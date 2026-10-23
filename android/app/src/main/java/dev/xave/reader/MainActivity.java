@@ -544,7 +544,6 @@ public class MainActivity extends Activity {
                         try { writeSummary(file, doc); } catch (Exception ignored) { }
                         runOnUiThread(() -> { if (token == generation && !isFinishing()) {
                             showReader(doc, file, true);
-                            Toast.makeText(this, ReaderDocument.savedMessage(doc), Toast.LENGTH_LONG).show();
                         } });
                     } catch (Exception e) {
                         try { DocumentFiles.delete(file); } catch (Exception ignored) { }
@@ -657,7 +656,11 @@ public class MainActivity extends Activity {
         layout("reader"); document = doc; currentFile = file;
         LinearLayout top = bar();
         top.addView(icon("‹", v -> showLibrary()));
-        top.addView(new View(this), new LinearLayout.LayoutParams(0, 0, 1));
+        // The save confirmation sits in the bar, clear of the text, and goes after 3 seconds or the first scroll.
+        TextView saved = label(captured ? ReaderDocument.savedMessage(doc) : "", 14);
+        saved.setTextColor(muted()); saved.setMaxLines(1); saved.setEllipsize(TextUtils.TruncateAt.END);
+        top.addView(saved, new LinearLayout.LayoutParams(0, -2, 1));
+        if (captured) saved.postDelayed(() -> saved.setText(""), 3000);
         top.addView(icon("⋮", this::readerOptions));
         divider(screen);
         browser = new WebView(this);
@@ -701,7 +704,10 @@ public class MainActivity extends Activity {
                 });
             }
         });
-        browser.setOnScrollChangeListener((view,x,y,oldX,oldY) -> updateReadingProgress());
+        browser.setOnScrollChangeListener((view,x,y,oldX,oldY) -> {
+            if (y != oldY) saved.setText("");
+            updateReadingProgress();
+        });
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         divider(screen);
         LinearLayout footer = bar(); footer.setPadding(0, dp(8), 0, dp(8));
