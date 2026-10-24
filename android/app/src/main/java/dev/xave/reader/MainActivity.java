@@ -51,12 +51,14 @@ import java.nio.file.Files;
 import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.IntConsumer;
@@ -93,6 +95,8 @@ public class MainActivity extends Activity {
     // Set when dark mode switched during a capture; the new theme waits until you leave the loaded page.
     private boolean themeStale;
     private LinearLayout libraryEntries;
+    // Saves still downloading, by post key. Static so a link opened again from a new screen or activity waits for its save.
+    private static final Set<String> saving = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable poll = this::pollStatus;
     private final Set<File> selected = new HashSet<>();
@@ -422,6 +426,10 @@ public class MainActivity extends Activity {
     private void openSaved(File file) {
         if (busy) return;
         busy = true;
+        load(file);
+    }
+
+    private void load(File file) {
         int token = generation;
         io.execute(() -> {
             try {
@@ -451,16 +459,19 @@ public class MainActivity extends Activity {
         if (!url.contains("://")) url = "https://" + url;
         String key = ReaderDocument.capturable(url) ? ReaderDocument.postKey(url) : null;
         if (key == null) { openOnline(url); return; }
-        int token = generation;
+        if (saving.contains(key)) {
+            Toast.makeText(this, "Still saving this post. It appears in your library when it's done.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Taking the link ends this screen, so a capture finishing during the lookup saves in the background instead of opening.
+        int token = ++generation;
         String link = url;
         io.execute(() -> {
             File saved = findSaved(key);
             runOnUiThread(() -> {
                 if (token != generation || isFinishing()) return;
                 if (saved == null) { openOnline(link); return; }
-                // A capture running here finishes in the background, so this screen may be left mid-save.
-                busy = false;
-                openSaved(saved);
+                load(saved);
                 Toast.makeText(this, "Already saved. To capture it again, use ⋮ > Open on X.", Toast.LENGTH_LONG).show();
             });
         });
@@ -652,6 +663,8 @@ public class MainActivity extends Activity {
         if (token != generation) return;
         status.setText("Downloading images for offline reading…");
         Context app = getApplicationContext();
+        String key = ReaderDocument.postKey(doc.optString("source"));
+        if (key != null) saving.add(key);
         captures.execute(() -> {
             File file = new File(library(), UUID.randomUUID() + ".json");
             ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file),
@@ -677,6 +690,8 @@ public class MainActivity extends Activity {
                     if (token == generation) { busy = false; error("Could not save this capture. Check available storage and retry."); }
                     else Toast.makeText(app, "Could not save a capture. Check available storage and retry.", Toast.LENGTH_LONG).show();
                 });
+            } finally {
+                if (key != null) saving.remove(key);
             }
         });
     }
@@ -700,8 +715,8 @@ public class MainActivity extends Activity {
     private void showReader(JSONObject doc, File file, boolean captured) {
         if (captured && "online".equals(mode) && browser != null) {
             destroySource();
-            // A page that navigated while images downloaded no longer shows this capture's source.
-            if (doc.optString("source").equals(browser.getUrl())) {
+            // A page that navigated while images downloaded no longer shows this capture's post.
+            if (Objects.equals(ReaderDocument.postKey(doc.optString("source")), ReaderDocument.postKey(browser.getUrl()))) {
                 sourceBrowser = browser; sourceUrl = doc.optString("source");
                 ((android.view.ViewGroup)browser.getParent()).removeView(browser);
                 sourceBrowser.onPause(); browser = null;

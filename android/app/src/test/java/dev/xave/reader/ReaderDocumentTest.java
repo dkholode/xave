@@ -133,6 +133,10 @@ public final class ReaderDocumentTest {
         assertEquals(2, ReaderDocument.imageCount(pictured));
     }
 
+    @Test public void anArticleTitledLikeAHugeThreadCountsAsNoPosts() throws Exception {
+        assertEquals(0, ReaderDocument.postCount(new JSONObject().put("title", "@alice · 2147483648 posts")));
+    }
+
     @Test public void genericArticleTitleIsReplacedByTheLineAfterTheAuthorsHandle() throws Exception {
         JSONObject conversation = new JSONObject().put("title", "Conversation").put("source", "https://x.com/bob/status/9")
             .put("blocks", new JSONArray().put(text("@bob")).put(text("Why e-ink finally works for reading")));

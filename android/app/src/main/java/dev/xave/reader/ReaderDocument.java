@@ -99,10 +99,11 @@ final class ReaderDocument {
         return handle.isEmpty() ? "Saved X Article" : "Saved X Article by @" + handle;
     }
 
-    /** Posts in a thread capture, read from its title; 0 for an Article. */
+    /** Posts in a thread capture, read from its title; 0 for an Article, even one titled like a thread. */
     static int postCount(JSONObject document) {
         Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
-        return thread.matches() ? Integer.parseInt(thread.group(2)) : 0;
+        try { return thread.matches() ? Integer.parseInt(thread.group(2)) : 0; }
+        catch (NumberFormatException tooLarge) { return 0; }
     }
 
     /** Image blocks in a capture, whether or not their files downloaded. */

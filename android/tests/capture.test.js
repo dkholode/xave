@@ -97,6 +97,14 @@ test('Navigating to another post resets the collector', () => {
   const doc = f.capture();
   assert(doc.title === '@bob · 1 post' && !JSON.stringify(doc).includes('First thread'), 'Leaked posts between threads'); f.close();
 });
+test('A new post collects nothing until X replaces the previous post on the page', () => {
+  const f = fixture(post('alice', root, 'Post A'), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.location.href = `https://x.com/alice/status/${reply}`; f.install(); f.summary();
+  f.doc.body.innerHTML = post('alice', reply, 'Post B');
+  const doc = f.capture();
+  assert(doc.title === '@alice · 1 post' && !JSON.stringify(doc).includes('Post A'), 'Kept the previous post from before X rendered the new one'); f.close();
+});
 test('Re-injecting on the same post keeps posts X has scrolled away', () => {
   const f = fixture(post('alice', root, 'First post') + post('alice', reply, 'Second post'), `https://x.com/alice/status/${root}`);
   f.summary();

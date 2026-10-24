@@ -25,7 +25,11 @@
 
   function scan() {
     if (!isX || !status || pageKey(location.href) !== key) return;
-    document.querySelectorAll('article').forEach(card => {
+    const cards = [...document.querySelectorAll('article')];
+    // Right after navigating to another post, X still shows the previous one, so wait until this post is on the page.
+    if (!posts.has(status[2]) && !cards.some(card => [...card.querySelectorAll('a[href*="/status/"]')]
+      .some(a => (a.getAttribute('href').match(/\/status\/(\d+)/) || [])[1] === status[2]))) return;
+    cards.forEach(card => {
       const own = selector => [...card.querySelectorAll(selector)].filter(el =>
         el.closest('article') === card && !el.closest('[data-testid="quoteTweet"]'));
       if (card.querySelector('[data-testid="placementTracking"]') || /\b(Ad|Promoted)\b/.test(card.querySelector('[data-testid="socialContext"]')?.innerText || '')) return;
