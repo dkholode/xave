@@ -151,4 +151,44 @@ public final class LibraryBackupTest {
         }
         assertEquals(java.util.Collections.singletonList("library/" + A + ".json"), names);
     }
+
+    @Test public void aRestoreThatFailsPartWayLeavesTheLibraryAsItWas() throws Exception {
+        File root = folder.newFolder("restored");
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "library/" + A + ".json", doc("First article").toString());
+            entry(zip, "images/" + A + "/0.jpg", new byte[ImageDownloads.MAX_IMAGE_BYTES + 1]);
+        }
+        try {
+            LibraryBackup.read(asInput(backup), root);
+            org.junit.Assert.fail("Restored a backup with an oversized image");
+        } catch (Exception expected) { }
+        assertFalse(new File(root, "library/" + A + ".json").exists());
+        assertEquals(java.util.Arrays.asList("library"), java.util.Arrays.asList(root.list()));
+    }
+
+    @Test public void entriesARestoreSkipsStillCountTowardItsSizeLimit() throws Exception {
+        File root = folder.newFolder("restored");
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "unrelated.bin", new byte[2000]);
+            entry(zip, "library/" + A + ".json", doc("First article").toString());
+        }
+        try {
+            LibraryBackup.read(asInput(backup), root, 1000);
+            org.junit.Assert.fail("Expanded a skipped entry past the size limit");
+        } catch (Exception expected) { }
+        assertFalse(new File(root, "library/" + A + ".json").exists());
+    }
+
+    @Test public void aBackupARestoreCouldNotReadFailsInsteadOfReportingSuccess() throws Exception {
+        File library = folder.newFolder("source", "library");
+        char[] body = new char[8 * 1024 * 1024];
+        java.util.Arrays.fill(body, 'x');
+        DocumentFiles.writeAtomic(new File(library, A + ".json"), doc(new String(body)).toString());
+        try {
+            LibraryBackup.write(library.getParentFile(), new ByteArrayOutputStream());
+            org.junit.Assert.fail("Wrote an article too large to restore");
+        } catch (Exception expected) { }
+    }
 }
