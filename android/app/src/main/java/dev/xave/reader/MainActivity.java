@@ -463,7 +463,8 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Still saving this post. It appears in your library when it's done.", Toast.LENGTH_LONG).show();
             return;
         }
-        // Taking the link ends this screen, so a capture finishing during the lookup saves in the background instead of opening.
+        // Taking the link ends this screen: its automatic save stops, and a capture finishing during the lookup saves in the background.
+        autoSave = null;
         int token = ++generation;
         String link = url;
         io.execute(() -> {

@@ -23,22 +23,25 @@
   const image = el => ({kind: 'image', url: el.currentSrc || el.src,
     text: el.alt || 'Image'});
 
+  // A post is named by its own timestamp link; links in its text, quoted posts, and ads don't count.
+  function identify(card) {
+    const own = selector => [...card.querySelectorAll(selector)].filter(el =>
+      el.closest('article') === card && !el.closest('[data-testid="quoteTweet"]'));
+    if (card.querySelector('[data-testid="placementTracking"]') || /\b(Ad|Promoted)\b/.test(card.querySelector('[data-testid="socialContext"]')?.innerText || '')) return null;
+    const time = own('time')[0];
+    // Anonymous X pages use semantic articles and timestamp links, without test IDs.
+    const timestamp = time?.closest('a') || own('a[href*="ct=engagement_view_post"]')[0];
+    const link = timestamp ? new URL(timestamp.getAttribute('href'), source).href : '';
+    const match = link.match(/\/([^/]+)\/status\/(\d+)/);
+    return match ? {card, own, time, timestamp, match} : null;
+  }
+
   function scan() {
     if (!isX || !status || pageKey(location.href) !== key) return;
-    const cards = [...document.querySelectorAll('article')];
+    const found = [...document.querySelectorAll('article')].map(identify).filter(Boolean);
     // Right after navigating to another post, X still shows the previous one, so wait until this post is on the page.
-    if (!posts.has(status[2]) && !cards.some(card => [...card.querySelectorAll('a[href*="/status/"]')]
-      .some(a => (a.getAttribute('href').match(/\/status\/(\d+)/) || [])[1] === status[2]))) return;
-    cards.forEach(card => {
-      const own = selector => [...card.querySelectorAll(selector)].filter(el =>
-        el.closest('article') === card && !el.closest('[data-testid="quoteTweet"]'));
-      if (card.querySelector('[data-testid="placementTracking"]') || /\b(Ad|Promoted)\b/.test(card.querySelector('[data-testid="socialContext"]')?.innerText || '')) return;
-      const time = own('time')[0];
-      // Anonymous X pages use semantic articles and timestamp links, without test IDs.
-      const timestamp = time?.closest('a') || own('a[href*="ct=engagement_view_post"]')[0];
-      const link = timestamp ? new URL(timestamp.getAttribute('href'), source).href : '';
-      const match = link.match(/\/([^/]+)\/status\/(\d+)/);
-      if (!match) return;
+    if (!posts.has(status[2]) && !found.some(post => post.match[2] === status[2])) return;
+    found.forEach(({card, own, time, timestamp, match}) => {
       if (match[2] === status[2]) author = match[1].toLowerCase();
       if (!author || match[1].toLowerCase() !== author) return;
       const text = own('[data-testid="tweetText"], [dir="auto"].whitespace-pre-wrap')[0];

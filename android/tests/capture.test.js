@@ -105,6 +105,14 @@ test('A new post collects nothing until X replaces the previous post on the page
   const doc = f.capture();
   assert(doc.title === '@alice · 1 post' && !JSON.stringify(doc).includes('Post A'), 'Kept the previous post from before X rendered the new one'); f.close();
 });
+test('A link to the new post inside the previous post does not count as the new post loading', () => {
+  const f = fixture(post('alice', root, `Post A, see <a href="/alice/status/${reply}">this</a>`), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.location.href = `https://x.com/alice/status/${reply}`; f.install(); f.summary();
+  f.doc.body.innerHTML = post('alice', reply, 'Post B');
+  const doc = f.capture();
+  assert(doc.title === '@alice · 1 post' && !JSON.stringify(doc).includes('Post A'), 'A text link unlocked collection of the previous post'); f.close();
+});
 test('Re-injecting on the same post keeps posts X has scrolled away', () => {
   const f = fixture(post('alice', root, 'First post') + post('alice', reply, 'Second post'), `https://x.com/alice/status/${root}`);
   f.summary();
