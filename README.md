@@ -51,7 +51,8 @@ see [android/README.md](android/README.md).
    **Export** saves a self-contained HTML file or opens Android's
    Print / Save as PDF dialog, if a print service is installed.
 6. **⋮ > Search** in the library finds saved items by their first line or
-   author. To delete items, long-press one or use **⋮ > Delete**.
+   author, and Back closes it. To delete items, long-press one or use
+   **⋮ > Delete**.
 7. To always look over the page and tap **Capture** yourself, choose
    **⋮ > Auto-save** in the library, then **Review the page, then tap Capture**.
 

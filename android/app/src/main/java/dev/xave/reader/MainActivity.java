@@ -96,6 +96,7 @@ public class MainActivity extends Activity {
     private boolean themeStale;
     private LinearLayout libraryEntries;
     private String filter = "";
+    private EditText search;
     // Set while the reader shows search matches, so Prev and Next step through them instead of paging.
     private String finding;
     // Saves still downloading, by post key. Static so a link opened again from a new screen or activity waits for its save.
@@ -280,7 +281,7 @@ public class MainActivity extends Activity {
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        EditText search = new EditText(this);
+        search = new EditText(this);
         top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Search", "Delete", "Auto-save", "Theme",
                 "Back up library", "Restore a backup", "Sign out of X", "About"}, which -> {
             if (which == 0) { search.setVisibility(View.VISIBLE); search.requestFocus(); }
@@ -1126,6 +1127,7 @@ public class MainActivity extends Activity {
         // Only the capture just made keeps its loaded page, so Back from it returns there.
         if ("reader".equals(mode) && sourceBrowser != null) openOnline(document.optString("source"));
         else if ("online".equals(mode) && browser != null && browser.canGoBack()) browser.goBack();
+        else if ("library".equals(mode) && search.getVisibility() == View.VISIBLE) { search.setText(""); search.setVisibility(View.GONE); }
         else if (!"library".equals(mode)) showLibrary();
         else super.onBackPressed();
     }
