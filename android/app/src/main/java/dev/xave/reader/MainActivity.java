@@ -95,6 +95,9 @@ public class MainActivity extends Activity {
     // Set when dark mode switched during a capture; the new theme waits until you leave the loaded page.
     private boolean themeStale;
     private LinearLayout libraryEntries;
+    private String filter = "";
+    // Set while the reader shows search matches, so Prev and Next step through them instead of paging.
+    private String finding;
     // Saves still downloading, by post key. Static so a link opened again from a new screen or activity waits for its save.
     private static final Set<String> saving = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -107,7 +110,7 @@ public class MainActivity extends Activity {
             && (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         if (dark) setTheme(R.style.AppTheme_Dark);
         super.onCreate(state);
-        zoom = getPreferences(0).getInt("zoom", 100);
+        zoom = getPreferences(0).getInt("zoom", systemZoom());
         try (InputStream in = getAssets().open("capture.js")) {
             collector = new String(ImageDownloads.readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
         } catch (Exception e) { error("Cannot load capture tools."); return; }
@@ -212,7 +215,7 @@ public class MainActivity extends Activity {
         TextView b = new TextView(this);
         b.setText(text); b.setTextSize(16); b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setTextColor(filled ? bg() : fg()); b.setBackground(outline(filled));
-        b.setGravity(Gravity.CENTER); b.setMinHeight(dp(44)); b.setPadding(dp(20), 0, dp(20), 0);
+        b.setGravity(Gravity.CENTER); b.setMinHeight(dp(48)); b.setPadding(dp(20), 0, dp(20), 0);
         b.setOnClickListener(v -> action.run());
         announceAsButton(b);
         return b;
@@ -277,20 +280,38 @@ public class MainActivity extends Activity {
         LinearLayout top = bar();
         TextView name = label("Xave", 28); name.setTypeface(Typeface.DEFAULT_BOLD); name.setPadding(0, 0, 0, 0);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Delete", "Saving", "Theme"}, which -> {
-            if (which == 0) showSelection(); else if (which == 1) chooseSaving(); else chooseTheme();
+        EditText search = new EditText(this);
+        top.addView(icon("⋮", "More options", v -> popup(v, new String[]{"Search", "Delete", "Auto-save", "Theme",
+                "Back up library", "Restore a backup", "Sign out of X", "About"}, which -> {
+            if (which == 0) { search.setVisibility(View.VISIBLE); search.requestFocus(); }
+            else if (which == 1) showSelection(null);
+            else if (which == 2) chooseSaving();
+            else if (which == 3) chooseTheme();
+            else if (which == 4) backUp();
+            else if (which == 5) restore();
+            else if (which == 6) signOut();
+            else about();
         })));
         LinearLayout field = bar();
         field.setBackground(outline(false)); field.setPadding(dp(16), dp(3), dp(3), dp(3));
         ((LinearLayout.LayoutParams)field.getLayoutParams()).setMargins(0, dp(10), 0, dp(4));
         EditText url = new EditText(this);
-        url.setTextSize(17); url.setSingleLine(true); url.setHint("Paste an X post link");
+        url.setTextSize(17); url.setSingleLine(true); url.setHint("Paste an X link to save it");
         url.setTextColor(fg()); url.setHintTextColor(muted()); url.setBackground(null);
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         url.setImeOptions(EditorInfo.IME_ACTION_GO);
         url.setOnEditorActionListener((v, action, event) -> { open(url.getText().toString()); return true; });
         field.addView(url, new LinearLayout.LayoutParams(0, -2, 1));
         field.addView(pill("Open", true, () -> open(url.getText().toString())));
+        filter = "";
+        search.setTextSize(17); search.setSingleLine(true); search.setHint("Search saved posts");
+        search.setTextColor(fg()); search.setHintTextColor(muted()); search.setVisibility(View.GONE);
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) { }
+            @Override public void afterTextChanged(android.text.Editable text) { filter = text.toString().trim(); fillLibrary(); }
+        });
+        screen.addView(search);
         ScrollView scroll = new ScrollView(this);
         libraryEntries = new LinearLayout(this); libraryEntries.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(libraryEntries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -301,13 +322,31 @@ public class MainActivity extends Activity {
     private void fillLibrary() {
         libraryEntries.removeAllViews();
         File[] files = newestFirst(library());
-        section(libraryEntries, "Saved · " + files.length);
-        if (files.length == 0) {
-            TextView empty = label("Your saved reading will appear here.", 17);
+        List<File> shown = new ArrayList<>();
+        for (File file : files) if (filter.isEmpty() || matches(file, filter)) shown.add(file);
+        section(libraryEntries, filter.isEmpty() ? "Saved · " + files.length : "Matches · " + shown.size() + " of " + files.length);
+        if (shown.isEmpty()) {
+            TextView empty = label(files.length > 0 ? "Nothing saved matches \"" + filter + "\"."
+                : "Share a post from the X app and pick Xave, or paste its link above.\n\n"
+                + "A single post or an Article saves once its page loads. For a thread, scroll to load the posts you want, then tap Capture.", 17);
             empty.setTextColor(muted()); empty.setPadding(0, dp(8), 0, dp(8));
             libraryEntries.addView(empty);
         }
-        for (File file : files) entry(libraryEntries, file).setOnClickListener(v -> openSaved(file));
+        for (File file : shown) {
+            LinearLayout row = entry(libraryEntries, file);
+            row.setOnClickListener(v -> openSaved(file));
+            row.setOnLongClickListener(v -> { showSelection(file); return true; });
+        }
+    }
+
+    /** Search reads each row's summary, so it finds titles, first posts, and authors without opening the articles. */
+    private static boolean matches(File file, String query) {
+        try {
+            JSONObject summary = new JSONObject(new String(Files.readAllBytes(new File(file + ".meta").toPath()), StandardCharsets.UTF_8));
+            String q = query.toLowerCase(java.util.Locale.ROOT);
+            return summary.optString("title").toLowerCase(java.util.Locale.ROOT).contains(q)
+                || summary.optString("detail").toLowerCase(java.util.Locale.ROOT).contains(q);
+        } catch (Exception e) { return false; }
     }
 
     /** A library row: the first post or article title, with the author and post count under it. */
@@ -323,7 +362,7 @@ public class MainActivity extends Activity {
         LinearLayout text = new LinearLayout(this); text.setOrientation(LinearLayout.VERTICAL);
         TextView item = label(title, 18);
         item.setPadding(0, 0, 0, 0); item.setMaxLines(2); item.setEllipsize(TextUtils.TruncateAt.END);
-        TextView detail = label(summary.optString("detail"), 14);
+        TextView detail = label(withDate(summary.optString("detail"), file), 14);
         detail.setPadding(0, dp(3), 0, 0); detail.setTextColor(muted());
         text.addView(item); text.addView(detail);
         row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
@@ -339,7 +378,7 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         if (token == generation && !isFinishing()) {
                             item.setText(fresh.optString("title"));
-                            detail.setText(fresh.optString("detail"));
+                            detail.setText(withDate(fresh.optString("detail"), file));
                         }
                     });
                 } catch (Exception e) {
@@ -350,9 +389,17 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private void showSelection() {
+    /** The date a row was saved, from its file, so an older save is easy to tell from a newer one. */
+    private static String withDate(String detail, File file) {
+        String date = DateFormat.getDateInstance(DateFormat.MEDIUM).format(new Date(file.lastModified()));
+        return detail.isEmpty() ? date : detail + " · " + date;
+    }
+
+    /** first is a row you long-pressed, which starts out selected. */
+    private void showSelection(File first) {
         layout("delete"); document = null; currentFile = null;
         selected.clear();
+        if (first != null) selected.add(first);
         LinearLayout top = bar();
         top.addView(icon("‹", "Back to library", v -> showLibrary()));
         TextView heading = label("Select to delete", 19);
@@ -378,6 +425,7 @@ public class MainActivity extends Activity {
     private void selectable(LinearLayout entries, File file, TextView action) {
         LinearLayout row = entry(entries, file);
         CheckBox box = new CheckBox(this);
+        box.setChecked(selected.contains(file));
         box.setClickable(false); box.setButtonTintList(ColorStateList.valueOf(fg()));
         row.addView(box, 0);
         row.setOnClickListener(v -> {
@@ -549,6 +597,12 @@ public class MainActivity extends Activity {
             @Override public void onPageFinished(WebView view, String loaded) {
                 // A failed load still finishes, so keep its error message instead of polling for posts.
                 if (!"online".equals(mode) || view != browser || pageFailed) return;
+                // A short link can land on a post that an earlier capture is still saving.
+                String key = ReaderDocument.postKey(loaded);
+                if (autoSave != null && key != null && saving.contains(key)) {
+                    stopAutoSave(REVIEW_TIP);
+                    Toast.makeText(MainActivity.this, "Still saving this post. It appears in your library when it's done.", Toast.LENGTH_LONG).show();
+                }
                 view.evaluateJavascript(collector, null);
                 CookieManager.getInstance().flush();
                 pollStatus();
@@ -716,6 +770,8 @@ public class MainActivity extends Activity {
     }
 
     private void showReader(JSONObject doc, File file, boolean captured) {
+        // Back returns to a loaded page only from the capture just made, not from a saved item opened afterwards.
+        if (!captured) destroySource();
         if (captured && "online".equals(mode) && browser != null) {
             destroySource();
             // A page that navigated while images downloaded no longer shows this capture's post.
@@ -788,13 +844,15 @@ public class MainActivity extends Activity {
         screen.addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
         divider(screen);
         LinearLayout footer = bar(); footer.setPadding(0, dp(8), 0, dp(8));
-        TextView prev = pill("Prev", false, () -> browser.pageUp(false));
+        finding = null;
+        TextView prev = pill("Prev", false, () -> { if (finding != null) browser.findNext(false); else browser.pageUp(false); });
         prev.setContentDescription("Previous page");
         footer.addView(prev);
         readingProgress = label("0%", 16); readingProgress.setTypeface(Typeface.DEFAULT_BOLD);
         readingProgress.setGravity(Gravity.CENTER);
+        readingProgress.setOnClickListener(v -> { if (finding != null) clearFind(); });
         footer.addView(readingProgress, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView next = pill("Next", false, () -> browser.pageDown(false));
+        TextView next = pill("Next", false, () -> { if (finding != null) browser.findNext(true); else browser.pageDown(false); });
         next.setContentDescription("Next page");
         footer.addView(next);
         browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
@@ -815,30 +873,64 @@ public class MainActivity extends Activity {
     }
 
     private void updateReadingProgress() {
-        if (!"reader".equals(mode) || browser == null || readingProgress == null) return;
+        if (!"reader".equals(mode) || browser == null || readingProgress == null || finding != null) return;
         float range = browser.getContentHeight() * browser.getScale() - browser.getHeight();
         int percent = browser.getContentHeight() == 0 ? 0 : range <= dp(2) ? 100 : Math.max(0, Math.min(100, Math.round(browser.getScrollY() * 100 / range)));
         readingProgress.setText(percent + "%");
     }
 
     private void readerOptions(View anchor) {
-        String[] items = {"Text size", "Theme", "Export", "Open on X", "Delete"};
+        String[] items = {"Text size", "Find", "Theme", "Share link", "Export", "Open on X", "Delete"};
         popup(anchor, items, which -> {
             if (which == 0) {
                 LinearLayout sizes = new LinearLayout(this);
+                sizes.setGravity(Gravity.CENTER_VERTICAL);
                 sizes.setPadding(dp(20), dp(12), dp(20), 0);
-                LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, -2, 1);
-                half.setMargins(dp(6), 0, dp(6), 0);
-                TextView smaller = pill("A−", false, () -> changeZoom(-10));
-                TextView larger = pill("A+", false, () -> changeZoom(10));
+                LinearLayout.LayoutParams third = new LinearLayout.LayoutParams(0, -2, 1);
+                third.setMargins(dp(6), 0, dp(6), 0);
+                TextView value = label(zoom + "%", 18);
+                value.setGravity(Gravity.CENTER);
+                TextView smaller = pill("A−", false, () -> { changeZoom(zoom - 10); value.setText(zoom + "%"); });
+                TextView larger = pill("A+", false, () -> { changeZoom(zoom + 10); value.setText(zoom + "%"); });
                 smaller.setContentDescription("Smaller text"); larger.setContentDescription("Larger text");
-                sizes.addView(smaller, half); sizes.addView(larger, half);
-                new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null).show();
-            } else if (which == 1) chooseTheme();
-            else if (which == 2) exportDocument();
-            else if (which == 3) openOnline(document.optString("source"));
+                sizes.addView(smaller, third); sizes.addView(value, third); sizes.addView(larger, third);
+                new AlertDialog.Builder(this).setTitle("Text size").setView(sizes).setPositiveButton("Done", null)
+                    .setNeutralButton("Reset", (d,w) -> { changeZoom(systemZoom()); getPreferences(0).edit().remove("zoom").apply(); }).show();
+            } else if (which == 1) find();
+            else if (which == 2) chooseTheme();
+            else if (which == 3) shareLink();
+            else if (which == 4) exportDocument();
+            else if (which == 5) openOnline(document.optString("source"));
             else deleteCurrent();
         });
+    }
+
+    /** Prev and Next step through the matches until you tap the count, which goes back to paging. */
+    private void find() {
+        EditText query = new EditText(this);
+        query.setSingleLine(true); query.setHint("Words to find");
+        if (finding != null) query.setText(finding);
+        new AlertDialog.Builder(this).setTitle("Find").setView(query).setNegativeButton("Cancel", null)
+            .setPositiveButton("Find", (d,w) -> {
+                String words = query.getText().toString().trim();
+                if (words.isEmpty() || browser == null) return;
+                finding = words;
+                browser.setFindListener((active, count, done) -> {
+                    if (done && finding != null) readingProgress.setText(count == 0 ? "No matches · tap to clear" : (active + 1) + " of " + count + " · tap to clear");
+                });
+                browser.findAllAsync(words);
+            }).show();
+    }
+
+    private void clearFind() {
+        finding = null;
+        if (browser != null) browser.clearMatches();
+        updateReadingProgress();
+    }
+
+    private void shareLink() {
+        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, document.optString("source"));
+        startActivity(Intent.createChooser(send, "Share link"));
     }
 
     private void chooseTheme() {
@@ -855,7 +947,7 @@ public class MainActivity extends Activity {
 
     private void chooseSaving() {
         boolean review = getPreferences(0).getBoolean("review", false);
-        new AlertDialog.Builder(this).setTitle("Saving")
+        new AlertDialog.Builder(this).setTitle("Auto-save")
             .setSingleChoiceItems(new String[]{"Save when the page loads", "Review the page, then tap Capture"}, review ? 1 : 0, (dialog,which) -> {
                 dialog.dismiss();
                 getPreferences(0).edit().putBoolean("review", which == 1).apply();
@@ -882,10 +974,52 @@ public class MainActivity extends Activity {
             }).show();
     }
 
-    private void changeZoom(int delta) {
-        zoom = Math.max(70, Math.min(190, zoom + delta));
+    private void changeZoom(int size) {
+        zoom = Math.max(70, Math.min(190, size));
         getPreferences(0).edit().putInt("zoom", zoom).apply();
         browser.getSettings().setTextZoom(zoom);
+    }
+
+    /** Reading text starts at the system font size, in the 10% steps that A− and A+ use. */
+    private int systemZoom() {
+        return Math.max(70, Math.min(190, Math.round(getResources().getConfiguration().fontScale * 10) * 10));
+    }
+
+    private void backUp() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip")
+            .putExtra(Intent.EXTRA_TITLE, "xave-library-" + new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).format(new Date()) + ".zip");
+        try { startActivityForResult(intent, 2); }
+        catch (android.content.ActivityNotFoundException e) { error("This device has no file picker for saving a backup."); }
+    }
+
+    private void restore() {
+        // Some file managers label zip files as generic binary data, so those are offered too.
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+            .putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"});
+        try { startActivityForResult(intent, 3); }
+        catch (android.content.ActivityNotFoundException e) { error("This device has no file picker for opening a backup."); }
+    }
+
+    private void signOut() {
+        new AlertDialog.Builder(this).setMessage("Sign out of X? Xave forgets your X sign-in on this device. Your library stays.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Sign out", (d,w) -> {
+                CookieManager.getInstance().removeAllCookies(null);
+                CookieManager.getInstance().flush();
+                android.webkit.WebStorage.getInstance().deleteAllData();
+                Toast.makeText(this, "Signed out of X", Toast.LENGTH_SHORT).show();
+            }).show();
+    }
+
+    private void about() {
+        String version;
+        try { version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { version = ""; }
+        new AlertDialog.Builder(this).setTitle("Xave " + version)
+            .setMessage("Saves X posts, threads, and Articles to read offline.\n\nIf a capture comes out wrong, report it with the post's link.")
+            .setPositiveButton("Close", null)
+            .setNeutralButton("How to use", (d,w) -> openInBrowser("https://github.com/dkholode/xave#use"))
+            .setNegativeButton("Report a problem", (d,w) -> openInBrowser("https://github.com/dkholode/xave/issues/new?template=capture-problem.yml"))
+            .show();
     }
 
     private void exportDocument() {
@@ -932,6 +1066,32 @@ public class MainActivity extends Activity {
                     }
                     runOnUiThread(() -> Toast.makeText(this, "Exported", Toast.LENGTH_SHORT).show());
                 } catch (Exception e) { runOnUiThread(() -> error("Could not export the file.")); }
+            });
+        } else if ((request == 2 || request == 3) && result == RESULT_OK && data != null && data.getData() != null) {
+            Uri target = data.getData();
+            io.execute(() -> {
+                try {
+                    int count;
+                    if (request == 2) {
+                        try (OutputStream out = getContentResolver().openOutputStream(target)) {
+                            if (out == null) throw new Exception("File picker returned no output stream");
+                            count = LibraryBackup.write(getFilesDir(), out);
+                        }
+                    } else {
+                        try (InputStream in = getContentResolver().openInputStream(target)) {
+                            if (in == null) throw new Exception("File picker returned no input stream");
+                            count = LibraryBackup.read(in, getFilesDir());
+                        }
+                    }
+                    String items = count + (count == 1 ? " item" : " items");
+                    runOnUiThread(() -> {
+                        Toast.makeText(this, (request == 2 ? "Backed up " : "Restored ") + items, Toast.LENGTH_SHORT).show();
+                        if (request == 3 && "library".equals(mode) && !isDestroyed()) fillLibrary();
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> error(request == 2 ? "Could not save the backup. Check available storage and retry."
+                        : "Could not read this backup. Choose a file made with Back up library."));
+                }
             });
         }
     }

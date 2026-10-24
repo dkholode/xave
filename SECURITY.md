@@ -33,5 +33,9 @@ Xave captures content from X, so it treats every page as untrusted:
   Cloud backup is off. Device-to-device transfer on Android 12 and later copies
   only the library and reading settings, never browser data such as cookies.
   On Android 11 and earlier, nothing is backed up or transferred.
+- A library backup holds only saved articles and their images. Restoring one
+  treats it as untrusted: only article and image entries with the expected
+  names are read, sizes are capped, articles must parse as JSON, existing saves
+  are never overwritten, and library rows are rebuilt from the articles.
 
 Reports that bypass any of these are in scope.
