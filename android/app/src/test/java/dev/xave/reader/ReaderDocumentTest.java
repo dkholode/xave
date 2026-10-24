@@ -117,6 +117,22 @@ public final class ReaderDocumentTest {
         assertEquals("@bob · Article", articleRow.getString("detail"));
     }
 
+    @Test public void libraryRowsKeepTheSourceLink() throws Exception {
+        assertEquals("https://x.com/alice/status/1", ReaderDocument.summary(thread()).getString("source"));
+        assertEquals("https://x.com/i/article/1234", ReaderDocument.summary(article()).getString("source"));
+    }
+
+    @Test public void captureSizeCountsThreadPostsAndImages() throws Exception {
+        assertEquals(2, ReaderDocument.postCount(thread()));
+        assertEquals(0, ReaderDocument.postCount(article()));
+        assertEquals(0, ReaderDocument.imageCount(thread()));
+        JSONObject pictured = new JSONObject().put("blocks", new JSONArray()
+            .put(new JSONObject().put("kind", "image"))
+            .put(text("Between the pictures."))
+            .put(new JSONObject().put("kind", "image")));
+        assertEquals(2, ReaderDocument.imageCount(pictured));
+    }
+
     @Test public void genericArticleTitleIsReplacedByTheLineAfterTheAuthorsHandle() throws Exception {
         JSONObject conversation = new JSONObject().put("title", "Conversation").put("source", "https://x.com/bob/status/9")
             .put("blocks", new JSONArray().put(text("@bob")).put(text("Why e-ink finally works for reading")));
@@ -138,6 +154,32 @@ public final class ReaderDocumentTest {
         assertFalse(ReaderDocument.xHost("example.com"));
         assertFalse(ReaderDocument.xHost("notx.com"));
         assertFalse(ReaderDocument.xHost(null));
+    }
+
+    @Test public void differentLinksToTheSamePostOrArticleShareAKey() {
+        assertEquals("status:123", ReaderDocument.postKey("https://x.com/alice/status/123?s=20"));
+        assertEquals("status:123", ReaderDocument.postKey("https://twitter.com/alice/status/123/photo/1"));
+        assertEquals("status:123", ReaderDocument.postKey("https://x.com/i/web/status/123"));
+        assertEquals("article:55", ReaderDocument.postKey("https://x.com/i/article/55"));
+        assertEquals("status:124", ReaderDocument.postKey("https://x.com/alice/status/124"));
+        assertEquals("example.org/a", ReaderDocument.postKey("https://Example.org/a/?q=1"));
+        assertNull(ReaderDocument.postKey("javascript:alert(1)"));
+    }
+
+    @Test public void sharedTextOpensItsXLinkEvenAfterAnotherLink() {
+        assertEquals("https://x.com/alice/status/1", ReaderDocument.sharedLink("Read https://example.org/a, then https://x.com/alice/status/1."));
+        assertEquals("https://t.co/AbC123", ReaderDocument.sharedLink("via https://t.co/AbC123)"));
+        assertEquals("https://example.org/a", ReaderDocument.sharedLink("only https://example.org/a"));
+        assertNull(ReaderDocument.sharedLink("no link here"));
+    }
+
+    @Test public void onlySecureXAndShortLinksOpenForCapture() {
+        assertTrue(ReaderDocument.capturable("https://x.com/alice/status/1"));
+        assertTrue(ReaderDocument.capturable("https://mobile.twitter.com/a/status/1"));
+        assertTrue(ReaderDocument.capturable("https://t.co/AbC123"));
+        assertFalse(ReaderDocument.capturable("http://x.com/alice/status/1"));
+        assertFalse(ReaderDocument.capturable("https://example.org/"));
+        assertFalse(ReaderDocument.capturable("https://t.co.evil.example/x"));
     }
 
     @Test public void storedImagesRenderByNameAndUnsafeNamesFallBackToPlaceholders() throws Exception {

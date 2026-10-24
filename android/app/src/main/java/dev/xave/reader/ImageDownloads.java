@@ -17,7 +17,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
-import java.util.function.BooleanSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.json.JSONArray;
@@ -35,7 +34,7 @@ final class ImageDownloads {
      * a file and render as placeholders. cookies holds one entry per block, null where none may be sent.
      */
     static void save(JSONObject doc, List<String> cookies, String userAgent, File images,
-                     BooleanSupplier cancelled, BiConsumer<Integer, Integer> progress) {
+                     BiConsumer<Integer, Integer> progress) {
         JSONArray blocks = doc.optJSONArray("blocks");
         ArrayList<Integer> pictures = new ArrayList<>();
         for (int i=0; i<blocks.length(); i++) if ("image".equals(blocks.optJSONObject(i).optString("kind"))) pictures.add(i);
@@ -50,7 +49,7 @@ final class ImageDownloads {
             JSONObject block = blocks.optJSONObject(pictures.get(n));
             String cookie = cookies.get(pictures.get(n));
             downloads.add(() -> {
-                try { return cancelled.getAsBoolean() ? null : download(block.optString("url"), cookie, userAgent, new File(images, String.valueOf(index)), total, deadline); }
+                try { return download(block.optString("url"), cookie, userAgent, new File(images, String.valueOf(index)), total, deadline); }
                 catch (Exception e) { return null; }
                 finally { progress.accept(done.incrementAndGet(), count); }
             });

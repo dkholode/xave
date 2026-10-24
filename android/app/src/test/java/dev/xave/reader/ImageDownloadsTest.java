@@ -27,7 +27,7 @@ public final class ImageDownloadsTest {
     @Test public void inlineImageIsSavedAsAFileAndItsPayloadLeavesTheArticle() throws Exception {
         JSONObject doc = capture("data:image/png;base64,iVBORw==");
         File images = new File(folder.getRoot(), "images");
-        ImageDownloads.save(doc, Arrays.asList(null, null), "test", images, () -> false, (done, count) -> { });
+        ImageDownloads.save(doc, Arrays.asList(null, null), "test", images, (done, count) -> { });
         JSONObject image = doc.getJSONArray("blocks").getJSONObject(1);
         assertEquals("0.png", image.getString("file"));
         assertFalse(image.has("url"));
@@ -37,15 +37,7 @@ public final class ImageDownloadsTest {
     @Test public void insecureImageUrlIsNotFetchedAndStaysAPlaceholder() throws Exception {
         JSONObject doc = capture("http://example.org/a.png");
         File images = new File(folder.getRoot(), "images");
-        ImageDownloads.save(doc, Arrays.asList(null, null), "test", images, () -> false, (done, count) -> { });
-        assertFalse(doc.getJSONArray("blocks").getJSONObject(1).has("file"));
-        assertEquals(0, images.listFiles().length);
-    }
-
-    @Test public void cancelledCaptureSavesNoImages() throws Exception {
-        JSONObject doc = capture("data:image/png;base64,iVBORw==");
-        File images = new File(folder.getRoot(), "images");
-        ImageDownloads.save(doc, Arrays.asList(null, null), "test", images, () -> true, (done, count) -> { });
+        ImageDownloads.save(doc, Arrays.asList(null, null), "test", images, (done, count) -> { });
         assertFalse(doc.getJSONArray("blocks").getJSONObject(1).has("file"));
         assertEquals(0, images.listFiles().length);
     }

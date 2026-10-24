@@ -31,16 +31,19 @@ see [android/README.md](android/README.md).
 ## Use
 
 1. Paste a link to an X post or Article, or use Share in the X app and pick Xave.
+   A link you already saved opens your saved copy.
 2. Let the page load. A single post or an X Article saves and opens by itself.
    If the post doesn't load, or the page can't load at all, Xave tells you and
-   saves nothing.
+   saves nothing. Tap **↻** to load the page again.
 3. A thread waits for you, because only scrolling loads all of its posts. Sign
    in to X if it asks, expand long posts, scroll to load the posts you want,
    then tap **Capture**. Touching the page before it saves also lets you do
    this. Replies from other accounts aren't saved.
 4. If something is missing, press Back to return to the loaded page, scroll
-   further, and capture again. The new capture replaces the old one. **‹**
-   returns to the library.
+   further, and capture again. The new capture replaces the old one, after
+   asking if it has fewer posts or images. A different post you tapped through
+   to is saved separately. **‹** returns to the library, and a save that is
+   still downloading images finishes in the background.
 5. In the reader, the **⋮** menu has text size, theme, export, the post on X,
    and delete. **Prev / Next** page through it, and your position is saved.
    **Export** saves a self-contained HTML file or opens Android's
