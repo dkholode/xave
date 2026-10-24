@@ -83,7 +83,7 @@ final class LibraryBackup {
                 total = count(total, bytes.length, maxBytes);
                 if (article.matches()) {
                     String text = new String(bytes, StandardCharsets.UTF_8);
-                    if (!shallow(text) || parse(text) == null) continue;
+                    if (parse(text) == null) continue;
                     File file = new File(new File(stage, "library"), article.group(1) + ".json");
                     file.getParentFile().mkdirs();
                     Files.write(file.toPath(), bytes);
@@ -125,25 +125,6 @@ final class LibraryBackup {
         }
     }
 
-    /**
-     * Android's JSON parser recurses once per nesting level, so a deeply nested article could overflow the stack.
-     * The parser also accepts single-quoted strings and comments, which could hide brackets from this count, so
-     * those are refused here; Xave writes neither.
-     */
-    private static boolean shallow(String text) {
-        int depth = 0;
-        boolean string = false;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (string) { if (c == '\\') i++; else if (c == '"') string = false; }
-            else if (c == '"') string = true;
-            else if (c == '\'' || c == '/' || c == '#') return false;
-            else if ((c == '{' || c == '[') && ++depth > 64) return false;
-            else if ((c == '}' || c == ']') && --depth < 0) return false;
-        }
-        return true;
-    }
-
     /** Reads past an entry the restore doesn't use, so a zip bomb hidden in one still hits the size limit. */
     private static long drain(InputStream in, long limit) throws Exception {
         byte[] buffer = new byte[8192];
@@ -160,9 +141,13 @@ final class LibraryBackup {
         Files.deleteIfExists(file.toPath());
     }
 
+    /**
+     * Android's lenient JSON parser recurses once per nesting level, and a backup's article is untrusted, so one
+     * nested deeply enough to overflow the stack is refused like any other unreadable article.
+     */
     private static JSONObject parse(String text) {
         try { return new JSONObject(text); }
-        catch (JSONException notAnArticle) { return null; }
+        catch (JSONException | StackOverflowError notAnArticle) { return null; }
     }
 
     private static long count(long total, long bytes, long max) throws Exception {

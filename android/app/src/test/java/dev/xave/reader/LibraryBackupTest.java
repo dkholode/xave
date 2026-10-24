@@ -192,19 +192,6 @@ public final class LibraryBackupTest {
         } catch (Exception expected) { }
     }
 
-    @Test public void articlesNestedTooDeeplyAreSkippedHoweverTheBracketsAreHidden() throws Exception {
-        File root = folder.newFolder("restored");
-        String deep = repeat('[', 100) + repeat(']', 100);
-        ByteArrayOutputStream backup = new ByteArrayOutputStream();
-        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
-            entry(zip, "library/" + A + ".json", "{\"blocks\":" + deep + "}");
-            entry(zip, "library/" + B + ".json", "{\"a\":'" + repeat(']', 100) + "',\"blocks\":" + deep + "}");
-            entry(zip, "library/" + C + ".json", doc("Fine").toString());
-        }
-        assertEquals(1, LibraryBackup.read(asInput(backup), root));
-        assertTrue(new File(root, "library/" + C + ".json").isFile());
-    }
-
     @Test public void aRestoreThatFailsWhilePublishingTakesBackWhatItAdded() throws Exception {
         File root = folder.newFolder("restored");
         File blocked = new File(root, "library/" + B + ".json.meta");
@@ -222,12 +209,6 @@ public final class LibraryBackupTest {
         assertFalse(new File(root, "library/" + A + ".json").exists());
         assertFalse(new File(root, "library/" + B + ".json").exists());
         assertFalse(new File(root, "images/" + A).exists());
-    }
-
-    private static String repeat(char c, int count) {
-        char[] chars = new char[count];
-        java.util.Arrays.fill(chars, c);
-        return new String(chars);
     }
 }
 
