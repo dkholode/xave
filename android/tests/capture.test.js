@@ -58,11 +58,21 @@ test('X retains exact snowflake IDs and excludes replies by other authors', () =
 });
 test('Loading status reports X Articles, loaded posts, and pages that are not posts', () => {
   const thread = fixture(post('alice', root, 'First post') + post('alice', reply, 'Second post') + post('bob', '20000000000000000003', 'Reply'), `https://x.com/alice/status/${root}`);
-  assert(JSON.stringify(thread.summary()) === '{"article":false,"status":true,"posts":2}', 'Wrong thread status: ' + JSON.stringify(thread.summary())); thread.close();
+  assert(JSON.stringify(thread.summary()) === '{"article":false,"status":true,"posts":2,"linked":true,"articleLength":0}', 'Wrong thread status: ' + JSON.stringify(thread.summary())); thread.close();
   const article = fixture(`<article data-testid="twitterArticleReadView"><p>${paragraph}</p></article>`, `https://x.com/alice/status/${root}`);
   assert(article.summary().article === true, 'Did not recognize an X Article'); article.close();
   const profile = fixture(post('alice', root, 'Pinned post'), 'https://x.com/alice');
-  assert(JSON.stringify(profile.summary()) === '{"article":false,"status":false,"posts":0}', 'Treated a profile as a post'); profile.close();
+  assert(JSON.stringify(profile.summary()) === '{"article":false,"status":false,"posts":0,"linked":false,"articleLength":0}', 'Treated a profile as a post'); profile.close();
+});
+test('Loading status says when the linked post has loaded and how much Article text there is', () => {
+  const f = fixture(post('alice', reply, 'A later post'), `https://x.com/alice/status/${root}`);
+  assert(f.summary().linked === false, 'Counted another post as the linked one');
+  f.doc.body.insertAdjacentHTML('afterbegin', post('alice', root, 'The linked post'));
+  assert(f.summary().linked === true, 'Missed the linked post'); f.close();
+  const article = fixture(`<article data-testid="twitterArticleReadView"><p>Short opening.</p></article>`, `https://x.com/alice/status/${root}`);
+  assert(article.summary().articleLength === 'Short opening.'.length, 'Wrong Article length: ' + article.summary().articleLength);
+  article.doc.querySelector('p').insertAdjacentHTML('afterend', '<p>More text.</p>');
+  assert(article.summary().articleLength > 'Short opening.'.length, 'Article length did not grow as text loaded'); article.close();
 });
 test('X refuses capture when the linked post has not loaded', () => {
   const f = fixture(post('alice', reply, 'Only a reply'), `https://x.com/alice/status/${root}`);
