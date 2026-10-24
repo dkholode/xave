@@ -39,4 +39,18 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/xave-$GITHUB_REF_NAME.apk" --generate-notes --verify-tag
+        run: |
+          apk="$RUNNER_TEMP/xave-$GITHUB_REF_NAME.apk"
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          cert=$("$apksigner" verify --print-certs "$apk" | grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
+          [ -n "$cert" ] || { echo "::error::Could not read the signing certificate."; exit 1; }
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## Install
+
+          Download \`xave-$GITHUB_REF_NAME.apk\` below, open it on your Android device, and allow installation from that source when prompted. It installs over an earlier version and keeps your library.
+
+          - APK SHA-256: \`$(sha256sum "$apk" | cut -d' ' -f1)\`
+          - Signing certificate SHA-256: \`$cert\`
+
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$apk" --generate-notes --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

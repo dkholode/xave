@@ -12,6 +12,12 @@ body:
       required: true
   - type: input
     attributes:
+      label: Xave version
+      description: In the library, ⋮ > About shows it.
+    validations:
+      required: true
+  - type: input
+    attributes:
       label: Device and Android version
     validations:
       required: true

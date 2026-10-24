@@ -25,8 +25,18 @@ phones, tablets, and e-ink devices such as the Boox Palma.
 
 Download the latest APK from
 [Releases](https://github.com/dkholode/xave/releases), open it on your device,
-and allow installation from that source when prompted. To build it yourself,
-see [android/README.md](android/README.md).
+and allow installation from that source when prompted. Google Play Protect may
+warn that it doesn't recognize the developer; choose **More details >
+Install anyway** to continue. To build it yourself, see
+[android/README.md](android/README.md).
+
+### Updates
+
+Xave doesn't check for updates itself. To hear about new versions, watch this
+repository's releases on GitHub (**Watch > Custom > Releases**), or add the
+repository to [Obtainium](https://github.com/ImranR98/Obtainium). A new APK
+installs over the old one and keeps your library. **⋮ > About** in the library
+shows the version you have.
 
 ## Use
 
@@ -38,7 +48,8 @@ see [android/README.md](android/README.md).
 3. A thread waits for you, because only scrolling loads all of its posts. Sign
    in to X if it asks, expand long posts, scroll to load the posts you want,
    then tap **Capture**. Touching the page before it saves also lets you do
-   this. Replies from other accounts aren't saved.
+   this. Replies from other accounts aren't saved. If signing in with Google or
+   Apple doesn't work inside Xave, sign in with your X username and password.
 4. If something is missing, press Back to return to the loaded page, scroll
    further, and capture again. The new capture replaces the old one, after
    asking if it has fewer posts or images. A different post you tapped through
