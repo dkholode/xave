@@ -1,6 +1,6 @@
 # Releasing
 
-Pushing a tag such as `v0.3.0` makes the
+Pushing a tag such as `v0.3` makes the
 [Release workflow](.github/workflows/release.yml) build a signed APK and publish
 it as a GitHub release.
 
