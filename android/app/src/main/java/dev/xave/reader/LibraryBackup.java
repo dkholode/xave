@@ -23,13 +23,13 @@ final class LibraryBackup {
     private static final Pattern ARTICLE = Pattern.compile("library/([0-9a-f-]{36})\\.json");
     private static final Pattern IMAGE = Pattern.compile("images/([0-9a-f-]{36})/(\\d{1,3}\\.(png|jpg|gif|webp))");
 
-    /** Writes each readable article with its images. Summaries are left out because read() rebuilds them. */
+    /** Writes each article read() would accept, with its images. Summaries are left out because read() rebuilds them. */
     static int write(File root, OutputStream out) throws Exception {
         ZipOutputStream zip = new ZipOutputStream(out);
         int written = 0;
         File[] articles = new File(root, "library").listFiles();
         if (articles != null) for (File article : articles) {
-            if (!article.isFile() || !article.getName().endsWith(".json")) continue;
+            if (!article.isFile() || !ARTICLE.matcher("library/" + article.getName()).matches()) continue;
             byte[] bytes = Files.readAllBytes(article.toPath());
             if (parse(new String(bytes, StandardCharsets.UTF_8)) == null) continue;
             put(zip, "library/" + article.getName(), bytes);

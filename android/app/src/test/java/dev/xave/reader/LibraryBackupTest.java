@@ -132,14 +132,15 @@ public final class LibraryBackupTest {
         assertFalse(new File(root, "images/" + C).exists());
     }
 
-    @Test public void metaFilesAreNotPartOfTheBackup() throws Exception {
+    @Test public void onlyArticlesARestoreCanReadArePartOfTheBackup() throws Exception {
         File library = folder.newFolder("source", "library");
         File article = new File(library, A + ".json");
         DocumentFiles.writeAtomic(article, doc("First article").toString());
         DocumentFiles.writeSummary(article, doc("First article"));
+        DocumentFiles.writeAtomic(new File(library, "notes.json"), doc("Not named by the app").toString());
 
         ByteArrayOutputStream backup = new ByteArrayOutputStream();
-        LibraryBackup.write(library.getParentFile(), backup);
+        assertEquals(1, LibraryBackup.write(library.getParentFile(), backup));
 
         List<String> names = new ArrayList<>();
         ZipInputStream zip = new ZipInputStream(asInput(backup));
@@ -148,7 +149,6 @@ public final class LibraryBackupTest {
             names.add(entry.getName());
             entry = zip.getNextEntry();
         }
-        assertTrue(names.contains("library/" + A + ".json"));
-        for (String name : names) assertFalse(name, name.endsWith(".meta"));
+        assertEquals(java.util.Collections.singletonList("library/" + A + ".json"), names);
     }
 }
