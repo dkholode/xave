@@ -43,7 +43,7 @@
       if (node.nodeType !== Node.ELEMENT_NODE || !visible(node) || node.tagName === 'IMG') return;
       if (node.tagName === 'BR') { add('\n'); return; }
       const url = node.tagName === 'A' && node.hasAttribute('href') ? safeLink(node.getAttribute('href')) : null;
-      if (url) { add(node.innerText.replace(/\s+/g, ' '), url); return; }
+      if (url) { add(node.innerText.replace(/\u00a0/g, ' '), url); return; }
       node.childNodes.forEach(walk);
     };
     el.childNodes.forEach(walk);
@@ -94,8 +94,8 @@
       if (own('video').length) blocks.push({kind:'text', text:'[Video not saved offline — see original post]'});
       const quote = card.querySelector('[data-testid="quoteTweet"], article');
       if (quote) {
-        // The timestamp link is the quoted post's permalink, so it wins over links inside the quoted text.
-        const quoted = quote.querySelector('time')?.closest('a') || quote.querySelector('a[href*="/status/"]');
+        // Only the quote's timestamp link names it. Links in its text can point anywhere, so without one the note stays unlinked.
+        const quoted = quote.querySelector('time')?.closest('a');
         const quotedMatch = quoted && new URL(quoted.getAttribute('href'), source).href.match(/\/([^/]+)\/status\/(\d+)/);
         const placeholder = {kind:'text', text:'[Quoted post — see original]'};
         if (quotedMatch) placeholder.url = 'https://x.com/' + quotedMatch[1] + '/status/' + quotedMatch[2];

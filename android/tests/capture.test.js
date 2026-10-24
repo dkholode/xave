@@ -142,6 +142,11 @@ test('X does not attribute quoted text or images to the posting author', () => {
   assert(!doc.blocks.some(b => b.kind === 'image'), 'Captured quoted image');
   assert(doc.blocks.some(b => b.text.includes('Quoted post')), 'Missing quote placeholder'); f.close();
 });
+test('A quote without its own timestamp link stays unlinked', () => {
+  const f = fixture(`<article data-testid="tweet"><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Look</div><div data-testid="quoteTweet"><div data-testid="tweetText">See <a href="/carol/status/789">this</a></div></div></article>`, `https://x.com/alice/status/${root}`);
+  const placeholder = f.capture().blocks.find(b => b.text === '[Quoted post — see original]');
+  assert(placeholder && !placeholder.url, 'Linked the quote to a post mentioned in its text: ' + JSON.stringify(placeholder)); f.close();
+});
 test('A quoted post placeholder links to the quoted post', () => {
   const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Look at this</div><div data-testid="quoteTweet"><a href="/bob/status/30000000000000000003"><time datetime="2026-10-19">Yesterday</time></a><div data-testid="tweetText">Quoted words</div></div></article>`, `https://x.com/alice/status/${root}`);
   const doc = f.capture();

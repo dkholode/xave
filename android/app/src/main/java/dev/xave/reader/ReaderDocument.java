@@ -376,7 +376,7 @@ final class ReaderDocument {
             }
             int depth = Math.max(1, Math.min(8, block.optInt("depth", 1)));
             String marker = block.optString("marker", "•");
-            boolean ordered = marker.matches("\\d+\\.");
+            boolean ordered = marker.matches("-?\\d+\\.");
             String tag = ordered ? "ol" : "ul";
             closeLists(html, open, depth);
             if (open.size() == depth && open.get(depth - 1).equals(tag)) {
@@ -384,9 +384,11 @@ final class ReaderDocument {
             } else {
                 closeLists(html, open, depth - 1);
             }
+            // A list that starts deeper than the one around it still needs a list item to sit in.
             while (open.size() < depth) {
                 html.append('<').append(tag).append('>');
                 open.add(tag);
+                if (open.size() < depth) html.append("<li>");
             }
             html.append(ordered ? "<li value=\"" + marker.substring(0, marker.length() - 1) + "\">" : "<li>").append(inline(block));
         }

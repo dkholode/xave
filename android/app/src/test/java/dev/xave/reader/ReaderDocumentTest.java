@@ -108,6 +108,14 @@ public final class ReaderDocumentTest {
         assertFalse("Unsafe link became an href", plain.contains("<a href"));
     }
 
+    @Test public void aListThatStartsDeeperStillNestsInsideListItems() throws Exception {
+        JSONObject doc = new JSONObject().put("blocks", new JSONArray()
+            .put(new JSONObject().put("kind", "listItem").put("depth", 2).put("marker", "•").put("text", "Nested only"))
+            .put(new JSONObject().put("kind", "listItem").put("depth", 1).put("marker", "-1.").put("text", "Below zero")));
+        String html = ReaderDocument.html(doc, false, name -> null);
+        assertTrue(html, html.contains("<ul><li><ul><li>Nested only</li></ul></li></ul><ol><li value=\"-1\">Below zero</li></ol>"));
+    }
+
     @Test public void listItemsInATableOfDepthsNestAndClose() throws Exception {
         JSONArray blocks = new JSONArray()
             .put(new JSONObject().put("kind", "listItem").put("depth", 1).put("marker", "•").put("text", "One"))
