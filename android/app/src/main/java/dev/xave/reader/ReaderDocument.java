@@ -195,12 +195,18 @@ final class ReaderDocument {
         }
     }
 
-    /** The link to open from shared text: its first X or t.co link, else its first web link, else null. */
+    /**
+     * The link to open from shared text: its first X link, else its first t.co link, else its first web link, else null.
+     * A post shared with its text can carry a t.co link of its own before the post's link.
+     */
     static String sharedLink(String text) {
         if (text == null) return null;
         List<String> links = new ArrayList<>();
         Matcher match = SHARED_LINK.matcher(text);
         while (match.find()) links.add(match.group().replaceAll("[)\\],.]+$", ""));
+        for (String link : links) {
+            if (capturable(link) && xHost(URI.create(link).getHost())) return link;
+        }
         for (String link : links) {
             if (capturable(link)) return link;
         }

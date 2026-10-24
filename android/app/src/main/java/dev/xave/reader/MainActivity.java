@@ -667,30 +667,32 @@ public class MainActivity extends Activity {
         String key = ReaderDocument.postKey(doc.optString("source"));
         if (key != null) saving.add(key);
         captures.execute(() -> {
-            File file = new File(library(), UUID.randomUUID() + ".json");
-            ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file),
-                (finished, count) -> runOnUiThread(() -> {
-                    if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
-                }));
             try {
-                writeAtomic(file, doc.toString());
-                try { writeSummary(file, doc); } catch (Exception ignored) { }
-                if (replaces != null) {
-                    try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
-                    getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
+                File file = new File(library(), UUID.randomUUID() + ".json");
+                ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file),
+                    (finished, count) -> runOnUiThread(() -> {
+                        if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
+                    }));
+                try {
+                    writeAtomic(file, doc.toString());
+                    try { writeSummary(file, doc); } catch (Exception ignored) { }
+                    if (replaces != null) {
+                        try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
+                        getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
+                    }
+                    runOnUiThread(() -> {
+                        if (token == generation && !isFinishing()) { showReader(doc, file, true); return; }
+                        // You left the capture screen, so confirm the save wherever you are now.
+                        Toast.makeText(app, ReaderDocument.savedMessage(doc), Toast.LENGTH_SHORT).show();
+                        if ("library".equals(mode) && !isDestroyed()) fillLibrary();
+                    });
+                } catch (Exception e) {
+                    try { DocumentFiles.delete(file); } catch (Exception ignored) { }
+                    runOnUiThread(() -> {
+                        if (token == generation) { busy = false; error("Could not save this capture. Check available storage and retry."); }
+                        else Toast.makeText(app, "Could not save a capture. Check available storage and retry.", Toast.LENGTH_LONG).show();
+                    });
                 }
-                runOnUiThread(() -> {
-                    if (token == generation && !isFinishing()) { showReader(doc, file, true); return; }
-                    // You left the capture screen, so confirm the save wherever you are now.
-                    Toast.makeText(app, ReaderDocument.savedMessage(doc), Toast.LENGTH_SHORT).show();
-                    if ("library".equals(mode) && !isDestroyed()) fillLibrary();
-                });
-            } catch (Exception e) {
-                try { DocumentFiles.delete(file); } catch (Exception ignored) { }
-                runOnUiThread(() -> {
-                    if (token == generation) { busy = false; error("Could not save this capture. Check available storage and retry."); }
-                    else Toast.makeText(app, "Could not save a capture. Check available storage and retry.", Toast.LENGTH_LONG).show();
-                });
             } finally {
                 if (key != null) saving.remove(key);
             }

@@ -173,6 +173,7 @@ public final class ReaderDocumentTest {
     @Test public void sharedTextOpensItsXLinkEvenAfterAnotherLink() {
         assertEquals("https://x.com/alice/status/1", ReaderDocument.sharedLink("Read https://example.org/a, then https://x.com/alice/status/1."));
         assertEquals("https://t.co/AbC123", ReaderDocument.sharedLink("via https://t.co/AbC123)"));
+        assertEquals("https://x.com/alice/status/9", ReaderDocument.sharedLink("Worth it https://t.co/AbC123\n\nhttps://x.com/alice/status/9"));
         assertEquals("https://example.org/a", ReaderDocument.sharedLink("only https://example.org/a"));
         assertNull(ReaderDocument.sharedLink("no link here"));
     }
