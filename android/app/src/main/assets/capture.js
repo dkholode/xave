@@ -1,10 +1,17 @@
 /* Runs only in the online browser. No native JS bridge is exposed to websites. */
 (() => {
+  // Same post, same collector: photo overlays and query changes keep posts that X has scrolled out of the page.
+  const pageKey = href => {
+    const url = new URL(href);
+    const match = url.pathname.match(/^\/(?:[^/]+|i\/web)\/status(?:es)?\/(\d+)/);
+    return match ? 'status:' + match[1] : url.origin + url.pathname;
+  };
   if (window.__xaveCollector) {
-    if (window.__xaveCollector.source === location.href) return;
+    if (window.__xaveCollector.key === pageKey(location.href)) return;
     window.__xaveCollector.stop();
   }
   const source = location.href;
+  const key = pageKey(source);
   const isX = /(^|\.)(x|twitter)\.com$/i.test(location.hostname);
   const status = location.pathname.match(/^\/(?:([^/]+)|i\/web)\/status(?:es)?\/(\d+)/);
   const posts = new Map();
@@ -16,18 +23,25 @@
   const image = el => ({kind: 'image', url: el.currentSrc || el.src,
     text: el.alt || 'Image'});
 
+  // A post is named by its own timestamp link; links in its text, quoted posts, and ads don't count.
+  function identify(card) {
+    const own = selector => [...card.querySelectorAll(selector)].filter(el =>
+      el.closest('article') === card && !el.closest('[data-testid="quoteTweet"]'));
+    if (card.querySelector('[data-testid="placementTracking"]') || /\b(Ad|Promoted)\b/.test(card.querySelector('[data-testid="socialContext"]')?.innerText || '')) return null;
+    const time = own('time')[0];
+    // Anonymous X pages use semantic articles and timestamp links, without test IDs.
+    const timestamp = time?.closest('a') || own('a[href*="ct=engagement_view_post"]')[0];
+    const link = timestamp ? new URL(timestamp.getAttribute('href'), source).href : '';
+    const match = link.match(/\/([^/]+)\/status\/(\d+)/);
+    return match ? {card, own, time, timestamp, match} : null;
+  }
+
   function scan() {
-    if (!isX || !status || location.href !== source) return;
-    document.querySelectorAll('article').forEach(card => {
-      const own = selector => [...card.querySelectorAll(selector)].filter(el =>
-        el.closest('article') === card && !el.closest('[data-testid="quoteTweet"]'));
-      if (card.querySelector('[data-testid="placementTracking"]') || /\b(Ad|Promoted)\b/.test(card.querySelector('[data-testid="socialContext"]')?.innerText || '')) return;
-      const time = own('time')[0];
-      // Anonymous X pages use semantic articles and timestamp links, without test IDs.
-      const timestamp = time?.closest('a') || own('a[href*="ct=engagement_view_post"]')[0];
-      const link = timestamp ? new URL(timestamp.getAttribute('href'), source).href : '';
-      const match = link.match(/\/([^/]+)\/status\/(\d+)/);
-      if (!match) return;
+    if (!isX || !status || pageKey(location.href) !== key) return;
+    const found = [...document.querySelectorAll('article')].map(identify).filter(Boolean);
+    // Right after navigating to another post, X still shows the previous one, so wait until this post is on the page.
+    if (!posts.has(status[2]) && !found.some(post => post.match[2] === status[2])) return;
+    found.forEach(({card, own, time, timestamp, match}) => {
       if (match[2] === status[2]) author = match[1].toLowerCase();
       if (!author || match[1].toLowerCase() !== author) return;
       const text = own('[data-testid="tweetText"], [dir="auto"].whitespace-pre-wrap')[0];
@@ -136,7 +150,7 @@
   // Polled by the app so the capture screen can say how much of the thread has loaded, and so it can
   // save without a tap once the linked post or the Article's text stops changing.
   function summary() {
-    if (location.href !== source) return {article: false, status: false, posts: 0, linked: false, articleLength: 0};
+    if (pageKey(location.href) !== key) return {article: false, status: false, posts: 0, linked: false, articleLength: 0};
     scan();
     const view = isX && document.querySelector(articleView);
     return {article: !!view, status: !!status, posts: posts.size, linked: !!status && posts.has(status[2]),
@@ -144,7 +158,7 @@
   }
 
   function capture() {
-    if (location.href !== source) return JSON.stringify({error:'The page changed. Reload the page before capturing this link.'});
+    if (pageKey(location.href) !== key) return JSON.stringify({error:'The page changed. Reload the page before capturing this link.'});
     if (!isX) return JSON.stringify({error:'Xave saves X posts and Articles only. Open an x.com link to capture it.'});
     scan();
     if (status && !document.querySelector(articleView)) {
@@ -163,5 +177,5 @@
   scan();
   const timer = setInterval(scan, 800);
   window.addEventListener('pagehide', () => clearInterval(timer), {once:true});
-  window.__xaveCollector = {capture, summary, source, stop: () => clearInterval(timer)};
+  window.__xaveCollector = {capture, summary, source, key, stop: () => clearInterval(timer)};
 })();

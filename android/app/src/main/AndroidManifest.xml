@@ -16,10 +16,10 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false"
         tools:targetApi="31" >
-        <!-- Rotation must not reload the online page: it holds scrolled-in posts and in-flight captures. -->
+        <!-- Rotation and dark-mode switches must not reload the online page: it holds scrolled-in posts and in-flight captures. -->
         <activity
             android:name="dev.xave.reader.MainActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize" >

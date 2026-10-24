@@ -20,6 +20,9 @@ final class ReaderDocument {
     // capture.js titles every thread capture this way, so it identifies threads in old and new saves alike.
     private static final Pattern THREAD_TITLE = Pattern.compile("@([A-Za-z0-9_]{1,15}) · (\\d+) posts?");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\[(.+)\\]", Pattern.DOTALL);
+    private static final Pattern STATUS_PATH = Pattern.compile("/(?:[^/]+|i/web)/status(?:es)?/(\\d+)");
+    private static final Pattern ARTICLE_PATH = Pattern.compile("/(?:i|[^/]+)/article/(\\d+)");
+    private static final Pattern SHARED_LINK = Pattern.compile("https?://[^\\s<>]+", Pattern.CASE_INSENSITIVE);
 
     /** Reading styles shared by the screen, print, and exported files. */
     private static final String STYLE = ""
@@ -78,14 +81,14 @@ final class ReaderDocument {
         }
     }
 
-    /** Library row text: the first post of a thread, or the title of an X Article. */
+    /** Library row text: the first post of a thread, or the title of an X Article, plus the source link so a new link can find its saved copy. */
     static JSONObject summary(JSONObject document) throws JSONException {
         Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
         if (thread.matches()) {
-            return new JSONObject().put("title", firstPost(document)).put("detail", thread.group());
+            return new JSONObject().put("title", firstPost(document)).put("detail", thread.group()).put("source", document.optString("source"));
         }
         String handle = handle(document.optString("source"));
-        return new JSONObject().put("title", document.optString("title")).put("detail", handle.isEmpty() ? "Article" : "@" + handle + " · Article");
+        return new JSONObject().put("title", document.optString("title")).put("detail", handle.isEmpty() ? "Article" : "@" + handle + " · Article").put("source", document.optString("source"));
     }
 
     /** The confirmation shown once a capture is saved, such as "Saved 6 posts by @demo_dev". */
@@ -94,6 +97,24 @@ final class ReaderDocument {
         if (thread.matches()) return "Saved " + thread.group(2) + (thread.group(2).equals("1") ? " post" : " posts") + " by @" + thread.group(1);
         String handle = handle(document.optString("source"));
         return handle.isEmpty() ? "Saved X Article" : "Saved X Article by @" + handle;
+    }
+
+    /** Posts in a thread capture, read from its title; 0 for an Article, even one titled like a thread. */
+    static int postCount(JSONObject document) {
+        Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
+        try { return thread.matches() ? Integer.parseInt(thread.group(2)) : 0; }
+        catch (NumberFormatException tooLarge) { return 0; }
+    }
+
+    /** Image blocks in a capture, whether or not their files downloaded. */
+    static int imageCount(JSONObject document) {
+        JSONArray blocks = document.optJSONArray("blocks");
+        int count = 0;
+        for (int i = 0; blocks != null && i < blocks.length(); ++i) {
+            JSONObject block = blocks.optJSONObject(i);
+            if (block != null && "image".equals(block.optString("kind"))) ++count;
+        }
+        return count;
     }
 
     private static String firstPost(JSONObject document) {
@@ -142,6 +163,54 @@ final class ReaderDocument {
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    /** The post or Article a link points to, so different links to the same one match; null for anything but a web link. */
+    static String postKey(String url) {
+        if (!webUrl(url)) return null;
+        try {
+            URI uri = new URI(url);
+            String path = uri.getPath();
+            if (xHost(uri.getHost())) {
+                Matcher status = STATUS_PATH.matcher(path);
+                if (status.lookingAt()) return "status:" + status.group(1);
+                Matcher article = ARTICLE_PATH.matcher(path);
+                if (article.lookingAt()) return "article:" + article.group(1);
+                return "x.com" + path.replaceAll("/+$", "");
+            }
+            return uri.getHost().toLowerCase(Locale.ROOT) + path.replaceAll("/+$", "");
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /** Whether the capture screen may open a link: https to X, or an X short link that redirects there. */
+    static boolean capturable(String url) {
+        if (!webUrl(url)) return false;
+        try {
+            URI uri = new URI(url);
+            return "https".equalsIgnoreCase(uri.getScheme()) && (xHost(uri.getHost()) || "t.co".equalsIgnoreCase(uri.getHost()));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * The link to open from shared text: its first X link, else its first t.co link, else its first web link, else null.
+     * A post shared with its text can carry a t.co link of its own before the post's link.
+     */
+    static String sharedLink(String text) {
+        if (text == null) return null;
+        List<String> links = new ArrayList<>();
+        Matcher match = SHARED_LINK.matcher(text);
+        while (match.find()) links.add(match.group().replaceAll("[)\\],.]+$", ""));
+        for (String link : links) {
+            if (capturable(link) && xHost(URI.create(link).getHost())) return link;
+        }
+        for (String link : links) {
+            if (capturable(link)) return link;
+        }
+        return links.isEmpty() ? null : links.get(0);
     }
 
     private static String inline(JSONObject block) {

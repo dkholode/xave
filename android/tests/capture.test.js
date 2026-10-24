@@ -97,6 +97,36 @@ test('Navigating to another post resets the collector', () => {
   const doc = f.capture();
   assert(doc.title === '@bob · 1 post' && !JSON.stringify(doc).includes('First thread'), 'Leaked posts between threads'); f.close();
 });
+test('A new post collects nothing until X replaces the previous post on the page', () => {
+  const f = fixture(post('alice', root, 'Post A'), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.location.href = `https://x.com/alice/status/${reply}`; f.install(); f.summary();
+  f.doc.body.innerHTML = post('alice', reply, 'Post B');
+  const doc = f.capture();
+  assert(doc.title === '@alice · 1 post' && !JSON.stringify(doc).includes('Post A'), 'Kept the previous post from before X rendered the new one'); f.close();
+});
+test('A link to the new post inside the previous post does not count as the new post loading', () => {
+  const f = fixture(post('alice', root, `Post A, see <a href="/alice/status/${reply}">this</a>`), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.location.href = `https://x.com/alice/status/${reply}`; f.install(); f.summary();
+  f.doc.body.innerHTML = post('alice', reply, 'Post B');
+  const doc = f.capture();
+  assert(doc.title === '@alice · 1 post' && !JSON.stringify(doc).includes('Post A'), 'A text link unlocked collection of the previous post'); f.close();
+});
+test('Re-injecting on the same post keeps posts X has scrolled away', () => {
+  const f = fixture(post('alice', root, 'First post') + post('alice', reply, 'Second post'), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.location.href = `https://x.com/alice/status/${root}/photo/1?s=20`;
+  f.doc.body.innerHTML = post('alice', reply, 'Second post'); f.install();
+  assert(f.capture().title === '@alice · 2 posts', 'Lost posts when the URL changed on the same post'); f.close();
+});
+test('A shared i/web link keeps its collector when X rewrites it to the author path', () => {
+  const f = fixture(post('alice', root, 'Shared post'), `https://x.com/i/web/status/${root}`);
+  f.summary();
+  f.location.href = `https://x.com/alice/status/${root}`;
+  f.doc.body.innerHTML = ''; f.install();
+  assert(f.summary().posts === 1 && !f.capture().error, 'Reset or refused the same post after a URL rewrite'); f.close();
+});
 test('X preserves image-only posts in a thread', () => {
   const photo = `<article data-testid="tweet"><a href="https://x.com/alice/status/${reply}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/test.jpg" alt="A diagram"></div></article>`;
   const f = fixture(post('alice', root, 'Thread introduction') + photo, `https://x.com/alice/status/${root}`);

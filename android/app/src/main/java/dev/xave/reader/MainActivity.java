@@ -2,6 +2,7 @@ package dev.xave.reader;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -50,16 +51,17 @@ import java.nio.file.Files;
 import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.IntConsumer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private LinearLayout screen;
@@ -90,6 +92,11 @@ public class MainActivity extends Activity {
     private int zoom;
     private String pendingExportFile;
     private boolean dark;
+    // Set when dark mode switched during a capture; the new theme waits until you leave the loaded page.
+    private boolean themeStale;
+    private LinearLayout libraryEntries;
+    // Saves still downloading, by post key. Static so a link opened again from a new screen or activity waits for its save.
+    private static final Set<String> saving = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable poll = this::pollStatus;
     private final Set<File> selected = new HashSet<>();
@@ -116,8 +123,21 @@ public class MainActivity extends Activity {
             String savedItem = state.getString("savedItem");
             if (savedItem != null && savedItem.equals(new File(savedItem).getName())
                     && new File(library(), savedItem).isFile()) openSaved(new File(library(), savedItem));
-            else if (state.getString("onlineUrl") != null) openOnline(state.getString("onlineUrl"));
+            else if (state.getString("onlineUrl") != null) {
+                // Only the link survives Android restarting Xave, so posts loaded by scrolling must load again.
+                openOnline(state.getString("onlineUrl"), true);
+                if ("online".equals(mode)) tip.setText("Xave restarted, so the page reloaded. Scroll to load the posts you want again, then tap Capture.");
+            }
         }
+    }
+
+    @Override public void onConfigurationChanged(Configuration config) {
+        super.onConfigurationChanged(config);
+        if (!"system".equals(getPreferences(0).getString("theme", "system"))) return;
+        boolean night = (config.uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        if (night == dark) return;
+        // Recreating would reload the loaded page and drop its scrolled-in posts, so a capture keeps its theme.
+        if ("online".equals(mode)) themeStale = true; else recreate();
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
@@ -138,8 +158,8 @@ public class MainActivity extends Activity {
         if (!Intent.ACTION_SEND.equals(intent.getAction())) return;
         String text = intent.getStringExtra(Intent.EXTRA_TEXT);
         if (text == null) return;
-        Matcher match = Pattern.compile("https?://[^\\s<>]+", Pattern.CASE_INSENSITIVE).matcher(text);
-        if (match.find()) openOnline(match.group().replaceAll("[)\\],.]+$", ""));
+        String link = ReaderDocument.sharedLink(text);
+        if (link != null) open(link);
         else error("The shared text has no web link.");
     }
 
@@ -170,6 +190,7 @@ public class MainActivity extends Activity {
         });
         screen.setBackgroundColor(bg());
         setContentView(screen);
+        if (themeStale && !"online".equals(nextMode)) { themeStale = false; recreate(); }
     }
 
     private TextView label(String text, int size) {
@@ -267,20 +288,26 @@ public class MainActivity extends Activity {
         url.setTextColor(fg()); url.setHintTextColor(muted()); url.setBackground(null);
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         url.setImeOptions(EditorInfo.IME_ACTION_GO);
-        url.setOnEditorActionListener((v, action, event) -> { openOnline(url.getText().toString()); return true; });
+        url.setOnEditorActionListener((v, action, event) -> { open(url.getText().toString()); return true; });
         field.addView(url, new LinearLayout.LayoutParams(0, -2, 1));
-        field.addView(pill("Open", true, () -> openOnline(url.getText().toString())));
-        File[] files = newestFirst(library());
+        field.addView(pill("Open", true, () -> open(url.getText().toString())));
         ScrollView scroll = new ScrollView(this);
-        LinearLayout entries = new LinearLayout(this); entries.setOrientation(LinearLayout.VERTICAL);
-        scroll.addView(entries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        section(entries, "Saved · " + files.length);
+        libraryEntries = new LinearLayout(this); libraryEntries.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(libraryEntries); screen.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        fillLibrary();
+    }
+
+    /** Rebuilds only the list, so a save finishing in the background shows up without clearing a link you are typing. */
+    private void fillLibrary() {
+        libraryEntries.removeAllViews();
+        File[] files = newestFirst(library());
+        section(libraryEntries, "Saved · " + files.length);
         if (files.length == 0) {
             TextView empty = label("Your saved reading will appear here.", 17);
             empty.setTextColor(muted()); empty.setPadding(0, dp(8), 0, dp(8));
-            entries.addView(empty);
+            libraryEntries.addView(empty);
         }
-        for (File file : files) entry(entries, file).setOnClickListener(v -> openSaved(file));
+        for (File file : files) entry(libraryEntries, file).setOnClickListener(v -> openSaved(file));
     }
 
     /** A library row: the first post or article title, with the author and post count under it. */
@@ -399,6 +426,10 @@ public class MainActivity extends Activity {
     private void openSaved(File file) {
         if (busy) return;
         busy = true;
+        load(file);
+    }
+
+    private void load(File file) {
         int token = generation;
         io.execute(() -> {
             try {
@@ -422,11 +453,58 @@ public class MainActivity extends Activity {
         DocumentFiles.writeAtomic(file, text);
     }
 
-    private void openOnline(String input) {
+    /** A link you paste or share opens its saved copy when there is one, so the library keeps each post once. */
+    private void open(String input) {
         String url = input.trim();
         if (!url.contains("://")) url = "https://" + url;
-        if (!ReaderDocument.webUrl(url) || !"https".equalsIgnoreCase(Uri.parse(url).getScheme())
-                || !ReaderDocument.xHost(Uri.parse(url).getHost())) {
+        String key = ReaderDocument.capturable(url) ? ReaderDocument.postKey(url) : null;
+        if (key == null) { openOnline(url); return; }
+        if (saving.contains(key)) {
+            Toast.makeText(this, "Still saving this post. It appears in your library when it's done.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Taking the link ends this screen: its automatic save stops, and a capture finishing during the lookup saves in the background.
+        autoSave = null;
+        int token = ++generation;
+        String link = url;
+        io.execute(() -> {
+            File saved = findSaved(key);
+            runOnUiThread(() -> {
+                if (token != generation || isFinishing()) return;
+                if (saved == null) { openOnline(link); return; }
+                load(saved);
+                Toast.makeText(this, "Already saved. To capture it again, use ⋮ > Open on X.", Toast.LENGTH_LONG).show();
+            });
+        });
+    }
+
+    /** The newest saved copy of a post or Article, matched by the source link in each library row's summary. */
+    private File findSaved(String key) {
+        for (File file : newestFirst(library())) {
+            try {
+                File meta = new File(file + ".meta");
+                JSONObject summary = meta.isFile() ? new JSONObject(new String(Files.readAllBytes(meta.toPath()), StandardCharsets.UTF_8)) : null;
+                String source;
+                if (summary != null && summary.has("source")) source = summary.getString("source");
+                else {
+                    // Summaries written before they kept the source are rebuilt once from the saved article.
+                    JSONObject doc = readSavedDocument(file);
+                    source = doc.optString("source");
+                    try { writeSummary(file, doc); } catch (Exception ignored) { }
+                }
+                if (key.equals(ReaderDocument.postKey(source))) return file;
+            } catch (Exception ignored) { }
+        }
+        return null;
+    }
+
+    private void openOnline(String input) { openOnline(input, false); }
+
+    /** review opens the page without saving it on load, for links you only meant to look at. */
+    private void openOnline(String input, boolean review) {
+        String url = input.trim();
+        if (!url.contains("://")) url = "https://" + url;
+        if (!ReaderDocument.capturable(url)) {
             error("Paste a link to an X post or Article, such as https://x.com/…/status/…"); return;
         }
         File replaces = "reader".equals(mode) && document != null && url.equals(document.optString("source")) ? currentFile : null;
@@ -435,17 +513,18 @@ public class MainActivity extends Activity {
         else destroySource();
         layout("online"); document = null; currentFile = null; replacing = replaces;
         // A recapture is for loading more of the page first, so only a new link saves without a tap.
-        autoSave = replaces == null && !getPreferences(0).getBoolean("review", false) ? new AutoSave(SystemClock.uptimeMillis()) : null;
+        autoSave = replaces == null && !review && !getPreferences(0).getBoolean("review", false) ? new AutoSave(SystemClock.uptimeMillis()) : null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
         LinearLayout top = bar();
         top.addView(icon("‹", "Back to library", v -> showLibrary()));
         status = label("Loading…", 16); status.setTypeface(Typeface.DEFAULT_BOLD); status.setMaxLines(2);
         top.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+        top.addView(icon("↻", "Reload page", v -> { if (browser != null) { pageFailed = false; browser.reload(); } }));
         top.addView(pill("Capture", true, this::capture));
         tip = label(autoSave != null ? "Saves once the page loads. Touch the page to review it first." : REVIEW_TIP, 14);
         tip.setTextColor(muted()); screen.addView(tip);
         browser = resumed == null ? new WebView(this) : resumed;
-        if (foreground) browser.resumeTimers();
+        syncTimers();
         pageFailed = false;
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
@@ -476,9 +555,9 @@ public class MainActivity extends Activity {
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError e) {
                 if (!request.isForMainFrame()) return;
-                pageFailed = true; status.setText("Page could not load. Check Wi-Fi and the link.");
+                pageFailed = true; status.setText("Page could not load. Tap ↻ to retry.");
                 // You may be waiting on the save elsewhere, so a failed load gets a dialog, not just the status line.
-                if (view == browser && autoSave != null) { stopAutoSave(REVIEW_TIP); error("Page could not load. Check Wi-Fi and the link."); }
+                if (view == browser && autoSave != null) { stopAutoSave(REVIEW_TIP); error("Page could not load. Check Wi-Fi and the link, then tap ↻ to reload."); }
             }
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 return renderGone(view);
@@ -498,7 +577,8 @@ public class MainActivity extends Activity {
         ui.removeCallbacks(poll);
         if (!"online".equals(mode) || browser == null) return;
         WebView page = browser;
-        if (!busy && !pageFailed) page.evaluateJavascript("window.__xaveCollector ? window.__xaveCollector.summary() : null", result -> {
+        // Injected on every poll so the count follows you to another post; on the same post the collector keeps its posts.
+        if (!busy && !pageFailed) page.evaluateJavascript(collector + "\nwindow.__xaveCollector.summary()", result -> {
             if (page != browser || busy || pageFailed) return;
             try {
                 JSONObject found = new JSONObject(result);
@@ -547,41 +627,81 @@ public class MainActivity extends Activity {
                         ? CookieManager.getInstance().getCookie(b.optString("url")) : null);
                 }
                 String userAgent = browser.getSettings().getUserAgentString();
-                status.setText("Downloading images for offline reading…");
-                captures.execute(() -> {
-                    File file = new File(library(), UUID.randomUUID() + ".json");
-                    ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file), () -> token != generation,
-                        (finished, count) -> runOnUiThread(() -> {
-                            if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
-                        }));
-                    if (token != generation) {
-                        try { DocumentFiles.delete(file); } catch (Exception ignored) { }
-                        return;
-                    }
-                    try {
-                        writeAtomic(file, doc.toString());
-                        try { writeSummary(file, doc); } catch (Exception ignored) { }
-                        if (replaces != null) {
-                            try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
-                            getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
+                if (replaces == null) { save(doc, cookies, userAgent, null, token); return; }
+                io.execute(() -> {
+                    JSONObject old;
+                    try { old = readSavedDocument(replaces); } catch (Exception e) { old = null; }
+                    JSONObject saved = old;
+                    runOnUiThread(() -> {
+                        if (token != generation) return;
+                        // Tapping through to another post on X and capturing it saves that post alongside, never over, this one.
+                        if (saved == null || !Objects.equals(ReaderDocument.postKey(saved.optString("source")), ReaderDocument.postKey(source))) {
+                            save(doc, cookies, userAgent, null, token);
+                        } else if (ReaderDocument.postCount(doc) >= ReaderDocument.postCount(saved)
+                                && ReaderDocument.imageCount(doc) >= ReaderDocument.imageCount(saved)) {
+                            save(doc, cookies, userAgent, replaces, token);
+                        } else {
+                            new AlertDialog.Builder(this)
+                                .setMessage("Replace your saved copy? It has " + size(saved) + ". This capture has " + size(doc) + ".")
+                                .setNegativeButton("Keep both", (d,w) -> save(doc, cookies, userAgent, null, token))
+                                .setPositiveButton("Replace", (d,w) -> save(doc, cookies, userAgent, replaces, token))
+                                .setOnCancelListener(d -> busy = false).show();
                         }
-                        runOnUiThread(() -> { if (token == generation && !isFinishing()) {
-                            showReader(doc, file, true);
-                        } });
-                    } catch (Exception e) {
-                        try { DocumentFiles.delete(file); } catch (Exception ignored) { }
-                        runOnUiThread(() -> { if (token == generation) {
-                            busy = false; error("Could not save this capture. Check available storage and retry.");
-                        } });
-                    }
+                    });
                 });
             } catch (Exception e) { busy = false; error("Could not capture this page. Wait for it to load, then retry."); }
         });
     }
 
+    private static String size(JSONObject doc) {
+        int posts = ReaderDocument.postCount(doc), images = ReaderDocument.imageCount(doc);
+        String pictures = images + (images == 1 ? " image" : " images");
+        return posts == 0 ? pictures : posts + (posts == 1 ? " post" : " posts") + " and " + pictures;
+    }
+
+    /** Downloads the images and writes the capture. It finishes even if you leave the screen, so no save is lost silently. */
+    private void save(JSONObject doc, List<String> cookies, String userAgent, File replaces, int token) {
+        if (token != generation) return;
+        status.setText("Downloading images for offline reading…");
+        Context app = getApplicationContext();
+        String key = ReaderDocument.postKey(doc.optString("source"));
+        if (key != null) saving.add(key);
+        captures.execute(() -> {
+            try {
+                File file = new File(library(), UUID.randomUUID() + ".json");
+                ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file),
+                    (finished, count) -> runOnUiThread(() -> {
+                        if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
+                    }));
+                try {
+                    writeAtomic(file, doc.toString());
+                    try { writeSummary(file, doc); } catch (Exception ignored) { }
+                    if (replaces != null) {
+                        try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
+                        getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
+                    }
+                    runOnUiThread(() -> {
+                        if (token == generation && !isFinishing()) { showReader(doc, file, true); return; }
+                        // You left the capture screen, so confirm the save wherever you are now.
+                        Toast.makeText(app, ReaderDocument.savedMessage(doc), Toast.LENGTH_SHORT).show();
+                        if ("library".equals(mode) && !isDestroyed()) fillLibrary();
+                    });
+                } catch (Exception e) {
+                    try { DocumentFiles.delete(file); } catch (Exception ignored) { }
+                    runOnUiThread(() -> {
+                        if (token == generation) { busy = false; error("Could not save this capture. Check available storage and retry."); }
+                        else Toast.makeText(app, "Could not save a capture. Check available storage and retry.", Toast.LENGTH_LONG).show();
+                    });
+                }
+            } finally {
+                if (key != null) saving.remove(key);
+            }
+        });
+    }
+
     /** Without this, a crashed or memory-killed page renderer would take the whole app down with it. */
     private boolean renderGone(WebView view) {
-        if (view == sourceBrowser) { destroySource(); return true; }
+        if (view == sourceBrowser) { destroySource(); syncTimers(); return true; }
         if (view != browser) return true;
         ((android.view.ViewGroup)browser.getParent()).removeView(browser);
         browser.destroy(); browser = null;
@@ -598,8 +718,8 @@ public class MainActivity extends Activity {
     private void showReader(JSONObject doc, File file, boolean captured) {
         if (captured && "online".equals(mode) && browser != null) {
             destroySource();
-            // A page that navigated while images downloaded no longer shows this capture's source.
-            if (doc.optString("source").equals(browser.getUrl())) {
+            // A page that navigated while images downloaded no longer shows this capture's post.
+            if (Objects.equals(ReaderDocument.postKey(doc.optString("source")), ReaderDocument.postKey(browser.getUrl()))) {
                 sourceBrowser = browser; sourceUrl = doc.optString("source");
                 ((android.view.ViewGroup)browser.getParent()).removeView(browser);
                 sourceBrowser.onPause(); browser = null;
@@ -608,16 +728,18 @@ public class MainActivity extends Activity {
         layout("reader"); document = doc; currentFile = file;
         LinearLayout top = bar();
         top.addView(icon("‹", "Back to library", v -> showLibrary()));
-        // The save confirmation sits in the bar, clear of the text, and goes after 3 seconds or the first scroll.
-        TextView saved = label(captured ? ReaderDocument.savedMessage(doc) : "", 14);
-        saved.setTextColor(muted()); saved.setMaxLines(1); saved.setEllipsize(TextUtils.TruncateAt.END);
+        // Back returns to the loaded page, which a single post saved on load may need for the rest of its thread.
+        String hint = sourceBrowser == null ? "" : ReaderDocument.postCount(doc) == 1
+            ? "Part of a thread? Press Back to load more." : "Missing something? Press Back to capture again.";
+        // The save confirmation sits in the bar, clear of the text. It goes on the first scroll, or after 3 seconds without a hint.
+        TextView saved = label(captured ? ReaderDocument.savedMessage(doc) + (hint.isEmpty() ? "" : "\n" + hint) : "", 14);
+        saved.setTextColor(muted()); saved.setMaxLines(2); saved.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(saved, new LinearLayout.LayoutParams(0, -2, 1));
-        if (captured) saved.postDelayed(() -> saved.setText(""), 3000);
+        if (captured && hint.isEmpty()) saved.postDelayed(() -> saved.setText(""), 3000);
         top.addView(icon("⋮", "More options", this::readerOptions));
         divider(screen);
         browser = new WebView(this);
-        // Timers are global; a capture finishing in the background must not restart page scripts.
-        if (foreground) browser.resumeTimers();
+        syncTimers();
         browser.setBackgroundColor(bg());
         WebSettings s = browser.getSettings();
         s.setJavaScriptEnabled(false); s.setAllowFileAccess(false); s.setAllowContentAccess(false);
@@ -643,7 +765,7 @@ public class MainActivity extends Activity {
                 boolean x = link.startsWith("https://") && ReaderDocument.xHost(request.getUrl().getHost());
                 new AlertDialog.Builder(MainActivity.this)
                     .setMessage((x ? "Open this link online?\n" : "Open this link in your browser?\n") + link).setNegativeButton("Cancel", null)
-                    .setPositiveButton("Open", (d,w) -> { if (x) openOnline(link); else openInBrowser(link); }).show();
+                    .setPositiveButton("Open", (d,w) -> { if (x) openOnline(link, true); else openInBrowser(link); }).show();
                 return true;
             }
             @Override public void onPageFinished(WebView view, String url) {
@@ -676,6 +798,15 @@ public class MainActivity extends Activity {
         next.setContentDescription("Next page");
         footer.addView(next);
         browser.loadDataWithBaseURL("https://offline.xave.invalid/", ReaderDocument.html(doc, dark, name -> "images/" + name), "text/html", "UTF-8", null);
+    }
+
+    /**
+     * Timers are global to every WebView. They stay paused while the reader shows a fresh capture, so its
+     * loaded X page, kept for Back, runs no scripts behind it.
+     */
+    private void syncTimers() {
+        if (browser == null) return;
+        if (foreground && sourceBrowser == null) browser.resumeTimers(); else browser.pauseTimers();
     }
 
     private void openInBrowser(String link) {
@@ -824,7 +955,7 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         foreground = true;
-        if (browser != null) { browser.resumeTimers(); browser.onResume(); }
+        if (browser != null) { browser.onResume(); syncTimers(); }
     }
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
         // Touching the capture screen means you want to look first, such as to sign in or scroll.
