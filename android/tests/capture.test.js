@@ -166,6 +166,11 @@ test('Line breaks in a post with a link survive', () => {
   const block = f.capture().blocks.find(b => b.kind === 'text');
   assert(JSON.stringify(block.runs) === '[{"text":"First line\\n\\nRead "},{"text":"this","url":"https://t.co/abc"}]', 'Lost line breaks: ' + JSON.stringify(block.runs)); f.close();
 });
+test('A block inside a post with a link starts a new line, and plain text stays one run', () => {
+  const f = fixture(`<article data-testid="tweet"><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText"><span>Line one</span><div><span>Line </span><span>two </span><a href="https://t.co/abc">a.co</a></div></div></article>`, `https://x.com/alice/status/${root}`);
+  const block = f.capture().blocks.find(b => b.kind === 'text');
+  assert(JSON.stringify(block.runs) === '[{"text":"Line one\\nLine two "},{"text":"a.co","url":"https://t.co/abc"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+});
 test('Unsafe links inside a post stay plain text', () => {
   const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Try <a href="https://t.co/abc">this</a> or <a href="javascript:alert(1)">that</a></div></article>`, `https://x.com/alice/status/${root}`);
   const block = f.capture().blocks.find(b => b.kind === 'text' && b.text.startsWith('Try'));

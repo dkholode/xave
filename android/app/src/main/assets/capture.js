@@ -42,6 +42,8 @@
       if (node.nodeType === Node.TEXT_NODE) { add(node.textContent.replace(/\u00a0/g, ' ')); return; }
       if (node.nodeType !== Node.ELEMENT_NODE || !visible(node) || node.tagName === 'IMG') return;
       if (node.tagName === 'BR') { add('\n'); return; }
+      // innerText starts a line at each block box, and `text` comes from innerText, so runs match it.
+      if (/^(block|list-item)$/.test(getComputedStyle(node).display) && runs.length && !runs[runs.length - 1].text.endsWith('\n')) add('\n');
       const url = node.tagName === 'A' && node.hasAttribute('href') ? safeLink(node.getAttribute('href')) : null;
       if (url) { add(node.innerText.replace(/\u00a0/g, ' '), url); return; }
       node.childNodes.forEach(walk);

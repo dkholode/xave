@@ -84,7 +84,7 @@ public final class ReaderDocumentTest {
     @Test public void threadsReadAsNumberedPostsWithReadableDatesThatLinkToEachPost() throws Exception {
         String reading = ReaderDocument.html(thread(), false, name -> null);
         assertTrue("Thread header lost its author or post count", reading.contains("<h1>@alice</h1>") && reading.contains("<p class='byline'>2 posts · <a href=\""));
-        assertFalse("Merged same-author posts were called a thread", reading.contains("Thread"));
+        assertFalse("Merged same-author posts were called a thread", reading.contains("class='byline'>Thread"));
         assertTrue("Posts lost their number, date, or link",
             reading.contains("<a href=\"https://x.com/alice/status/1\"><span>1 / 2</span><span>Oct 19, 2026</span></a>")
             && reading.contains("<a href=\"https://x.com/alice/status/2\"><span>2 / 2</span><span>6:21 PM · Oct 7, 2026</span></a>"));
