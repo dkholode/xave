@@ -142,6 +142,30 @@ test('X does not attribute quoted text or images to the posting author', () => {
   assert(!doc.blocks.some(b => b.kind === 'image'), 'Captured quoted image');
   assert(doc.blocks.some(b => b.text.includes('Quoted post')), 'Missing quote placeholder'); f.close();
 });
+test('A quoted post placeholder links to the quoted post', () => {
+  const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Look at this</div><div data-testid="quoteTweet"><a href="/bob/status/30000000000000000003"><time datetime="2026-10-19">Yesterday</time></a><div data-testid="tweetText">Quoted words</div></div></article>`, `https://x.com/alice/status/${root}`);
+  const doc = f.capture();
+  const placeholder = doc.blocks.find(b => b.text === '[Quoted post — see original]');
+  assert(placeholder && placeholder.url === 'https://x.com/bob/status/30000000000000000003', 'Placeholder is not linked: ' + JSON.stringify(placeholder));
+  assert(!doc.blocks.some(b => b.text.includes('Quoted words')), 'Captured quoted text'); f.close();
+});
+test('Links inside a post keep their destinations', () => {
+  const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">See <a href="https://t.co/abc">example.com/research…</a> for <a href="/hashtag/x">#x</a> details</div></article>`, `https://x.com/alice/status/${root}`);
+  const block = f.capture().blocks.find(b => b.kind === 'text' && b.text.startsWith('See'));
+  assert(JSON.stringify(block.runs) === '[{"text":"See "},{"text":"example.com/research…","url":"https://t.co/abc"},{"text":" for "},{"text":"#x","url":"https://x.com/hashtag/x"},{"text":" details"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+  const plain = fixture(post('alice', root, 'Plain'), `https://x.com/alice/status/${root}`);
+  assert(!('runs' in plain.capture().blocks.find(b => b.text === 'Plain')), 'Plain post gained runs'); plain.close();
+});
+test('Line breaks in a post with a link survive', () => {
+  const f = fixture(`<article data-testid="tweet"><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText" style="white-space:pre-wrap">First line\n\nRead <a href="https://t.co/abc">this</a></div></article>`, `https://x.com/alice/status/${root}`);
+  const block = f.capture().blocks.find(b => b.kind === 'text');
+  assert(JSON.stringify(block.runs) === '[{"text":"First line\\n\\nRead "},{"text":"this","url":"https://t.co/abc"}]', 'Lost line breaks: ' + JSON.stringify(block.runs)); f.close();
+});
+test('Unsafe links inside a post stay plain text', () => {
+  const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Try <a href="https://t.co/abc">this</a> or <a href="javascript:alert(1)">that</a></div></article>`, `https://x.com/alice/status/${root}`);
+  const block = f.capture().blocks.find(b => b.kind === 'text' && b.text.startsWith('Try'));
+  assert(JSON.stringify(block.runs) === '[{"text":"Try "},{"text":"this","url":"https://t.co/abc"},{"text":" or that"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+});
 test('Anonymous X articles preserve the public post and photo without test IDs', () => {
   const f = fixture(`<main><article><div dir="auto" class="whitespace-pre-wrap">Public post text</div><a href="/alice/status/${root}/photo/1"><img src="https://pbs.twimg.com/media/photo.webp"></a><a href="https://m.x.com/alice/status/${root}?launch_app_store=true&ct=engagement_view_post">Today</a><div data-engagement-action="like">123 likes</div></article></main>`, `https://x.com/alice/status/${root}`);
   const doc = f.capture();
@@ -210,6 +234,11 @@ test('Active and credential-bearing inline links are kept as inert text', () => 
 test('Explicit line breaks stay inside their paragraph', () => {
   const f = xArticle('Line breaks', `<p>${paragraph}</p><div>Before<br>After</div>`);
   assert(f.capture().blocks.some(b => b.text === 'Before\nAfter'), 'Lost the explicit line break'); f.close();
+});
+test('Article images that have not loaded yet are kept', () => {
+  const f = xArticle('Lazy image', `<p>${paragraph}</p><img src="https://pbs.twimg.com/media/lazy.jpg" alt="A chart" loading="lazy" style="width:300px;height:200px"><img src="https://abs.twimg.com/icon.png" style="width:20px;height:20px">`);
+  const images = f.capture().blocks.filter(b => b.kind === 'image');
+  assert(images.length === 1 && images[0].url.endsWith('lazy.jpg'), 'Wrong images: ' + JSON.stringify(images)); f.close();
 });
 test('Styled spans retain emphasis without copying source styles or inventing anchor links', () => {
   const f = xArticle('Styled spans', `<p>${paragraph}</p><div>A <span style="font-weight:700">bold</span> and <span style="font-style:italic">italic</span> sentence with <a name="section">an anchor</a>.</div>`);

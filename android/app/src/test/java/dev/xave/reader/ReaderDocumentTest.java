@@ -58,7 +58,8 @@ public final class ReaderDocumentTest {
         String html = ReaderDocument.html(article(), false, name -> null);
         assertTrue("Fragmented paragraph or missing inline formatting",
             html.contains("Read <strong>this important</strong> sentence with <a href=\"https://example.org/reference?x=1&amp;y=2\">a reference</a> here.</p>"));
-        assertTrue("Lost block formatting", html.contains("<h3>") && html.contains("<blockquote>") && html.contains("3. A numbered step"));
+        assertTrue("Lost block formatting", html.contains("<h3>") && html.contains("<blockquote>")
+            && html.contains("<ol><li value=\"3\">A numbered step<ul><li>A nested detail</li></ul></li></ol>"));
         assertTrue("Lost code indentation", html.contains("<pre>  if (offline)"));
         assertTrue("Lost the final paragraph", html.contains("Paragraph 11"));
     }
@@ -82,7 +83,8 @@ public final class ReaderDocumentTest {
 
     @Test public void threadsReadAsNumberedPostsWithReadableDatesThatLinkToEachPost() throws Exception {
         String reading = ReaderDocument.html(thread(), false, name -> null);
-        assertTrue("Thread header lost its author or post count", reading.contains("<h1>@alice</h1>") && reading.contains("Thread · 2 posts"));
+        assertTrue("Thread header lost its author or post count", reading.contains("<h1>@alice</h1>") && reading.contains("<p class='byline'>2 posts · <a href=\""));
+        assertFalse("Merged same-author posts were called a thread", reading.contains("Thread"));
         assertTrue("Posts lost their number, date, or link",
             reading.contains("<a href=\"https://x.com/alice/status/1\"><span>1 / 2</span><span>Oct 19, 2026</span></a>")
             && reading.contains("<a href=\"https://x.com/alice/status/2\"><span>2 / 2</span><span>6:21 PM · Oct 7, 2026</span></a>"));
@@ -95,12 +97,50 @@ public final class ReaderDocumentTest {
         assertFalse(reading.contains("[Quoted post"));
     }
 
+    @Test public void quotedPostNoteLinksToTheQuotedPost() throws Exception {
+        JSONObject linked = new JSONObject().put("kind", "text").put("text", "[Quoted post — see original]").put("url", "https://x.com/bob/status/3");
+        String reading = ReaderDocument.html(new JSONObject().put("blocks", new JSONArray().put(linked)), false, name -> null);
+        assertTrue(reading.contains("<p class='note'><a href=\"https://x.com/bob/status/3\">Quoted post — see original</a></p>"));
+
+        JSONObject unsafe = new JSONObject().put("kind", "text").put("text", "[Quoted post — see original]").put("url", "javascript:alert(1)");
+        String plain = ReaderDocument.html(new JSONObject().put("blocks", new JSONArray().put(unsafe)), false, name -> null);
+        assertTrue(plain.contains("<p class='note'>Quoted post — see original</p>"));
+        assertFalse("Unsafe link became an href", plain.contains("<a href"));
+    }
+
+    @Test public void listItemsInATableOfDepthsNestAndClose() throws Exception {
+        JSONArray blocks = new JSONArray()
+            .put(new JSONObject().put("kind", "listItem").put("depth", 1).put("marker", "•").put("text", "One"))
+            .put(new JSONObject().put("kind", "listItem").put("depth", 1).put("marker", "•").put("text", "Two"))
+            .put(new JSONObject().put("kind", "listItem").put("depth", 2).put("marker", "1.").put("text", "Two point one"))
+            .put(text("After"));
+        String html = ReaderDocument.html(new JSONObject().put("blocks", blocks), false, name -> null);
+        assertTrue(html.contains("<ul><li>One</li><li>Two<ol><li value=\"1\">Two point one</li></ol></li></ul><p>After</p>"));
+    }
+
     @Test public void saveConfirmationNamesThePostCountAndAuthorOrTheArticle() throws Exception {
         assertEquals("Saved 2 posts by @alice", ReaderDocument.savedMessage(thread()));
         assertEquals("Saved 1 post by @bob", ReaderDocument.savedMessage(new JSONObject().put("title", "@bob · 1 post")));
         assertEquals("Saved X Article by @bob", ReaderDocument.savedMessage(
             new JSONObject().put("title", "Why e-ink finally works").put("source", "https://x.com/bob/status/9")));
         assertEquals("Saved X Article", ReaderDocument.savedMessage(article()));
+    }
+
+    @Test public void saveConfirmationCountsImagesThatDidNotDownload() throws Exception {
+        JSONObject oneMissing = new JSONObject().put("title", "@alice · 2 posts").put("blocks", new JSONArray()
+            .put(new JSONObject().put("kind", "image").put("file", "0.jpg"))
+            .put(new JSONObject().put("kind", "image")));
+        assertEquals("Saved 2 posts by @alice · 1 image not saved", ReaderDocument.savedMessage(oneMissing));
+
+        JSONObject allSaved = new JSONObject().put("title", "@alice · 2 posts").put("blocks", new JSONArray()
+            .put(new JSONObject().put("kind", "image").put("file", "0.jpg")));
+        assertEquals("Saved 2 posts by @alice", ReaderDocument.savedMessage(allSaved));
+
+        JSONObject threeMissing = new JSONObject().put("title", "Why e-ink finally works").put("blocks", new JSONArray()
+            .put(new JSONObject().put("kind", "image"))
+            .put(new JSONObject().put("kind", "image"))
+            .put(new JSONObject().put("kind", "image")));
+        assertEquals("Saved X Article · 3 images not saved", ReaderDocument.savedMessage(threeMissing));
     }
 
     @Test public void exportsCarryTheSaveDateAndSource() throws Exception {

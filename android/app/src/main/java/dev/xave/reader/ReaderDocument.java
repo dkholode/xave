@@ -40,7 +40,7 @@ final class ReaderDocument {
         + ".post-meta{font:14px/1.4 sans-serif;margin:0 0 6px;break-after:avoid}"
         + ".post-meta a{display:flex;justify-content:space-between;color:inherit;text-decoration:none;opacity:.6}"
         + ".note{font:15px/1.4 sans-serif;white-space:normal;border:1px solid;border-radius:8px;padding:8px 12px;opacity:.7}"
-        + ".list-item{padding-left:1.3em;text-indent:-1.3em;margin:.4em 0}"
+        + "ul,ol{padding-left:1.4em;margin:.8em 0}li{margin:.4em 0;white-space:pre-wrap}"
         + "blockquote{border-left:3px solid;margin:1em 0;padding-left:14px;white-space:pre-wrap}"
         + "a{color:#000;text-decoration:underline}"
         + "hr{border:0;border-top:1px solid #000;opacity:.3;margin:24px 0}"
@@ -91,12 +91,18 @@ final class ReaderDocument {
         return new JSONObject().put("title", document.optString("title")).put("detail", handle.isEmpty() ? "Article" : "@" + handle + " · Article").put("source", document.optString("source"));
     }
 
-    /** The confirmation shown once a capture is saved, such as "Saved 6 posts by @demo_dev". */
+    /** The confirmation shown once a capture is saved, such as "Saved 6 posts by @demo_dev", plus a count of images whose download failed. */
     static String savedMessage(JSONObject document) {
         Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
-        if (thread.matches()) return "Saved " + thread.group(2) + (thread.group(2).equals("1") ? " post" : " posts") + " by @" + thread.group(1);
-        String handle = handle(document.optString("source"));
-        return handle.isEmpty() ? "Saved X Article" : "Saved X Article by @" + handle;
+        String message;
+        if (thread.matches()) {
+            message = "Saved " + thread.group(2) + (thread.group(2).equals("1") ? " post" : " posts") + " by @" + thread.group(1);
+        } else {
+            String handle = handle(document.optString("source"));
+            message = handle.isEmpty() ? "Saved X Article" : "Saved X Article by @" + handle;
+        }
+        int missing = imagesNotSaved(document);
+        return missing == 0 ? message : message + " · " + missing + (missing == 1 ? " image" : " images") + " not saved";
     }
 
     /** Posts in a thread capture, read from its title; 0 for an Article, even one titled like a thread. */
@@ -113,6 +119,17 @@ final class ReaderDocument {
         for (int i = 0; blocks != null && i < blocks.length(); ++i) {
             JSONObject block = blocks.optJSONObject(i);
             if (block != null && "image".equals(block.optString("kind"))) ++count;
+        }
+        return count;
+    }
+
+    /** Image blocks without a stored file, which means their download failed. */
+    private static int imagesNotSaved(JSONObject document) {
+        JSONArray blocks = document.optJSONArray("blocks");
+        int count = 0;
+        for (int i = 0; blocks != null && i < blocks.length(); ++i) {
+            JSONObject block = blocks.optJSONObject(i);
+            if (block != null && "image".equals(block.optString("kind")) && !imageFile(block.optString("file"))) ++count;
         }
         return count;
     }
@@ -299,7 +316,7 @@ final class ReaderDocument {
         String byline;
         if (isThread) {
             html.append("<h1>@").append(thread.group(1)).append("</h1>");
-            byline = thread.group(2).equals("1") ? "Post" : "Thread · " + thread.group(2) + " posts";
+            byline = thread.group(2).equals("1") ? "Post" : thread.group(2) + " posts";
             if (!open.isEmpty()) byline += " · " + open;
         } else {
             html.append("<h1>").append(escape(title)).append("</h1>");
@@ -328,15 +345,17 @@ final class ReaderDocument {
                     html.append("<p class='post-meta'><a href=\"").append(escape(link.optString("url"))).append("\"><span>").append(i + 1).append(" / ").append(posts.size())
                         .append("</span><span>").append(escape(postDate(link.optString("text")))).append("</span></a></p>");
                 }
-                for (JSONObject block : posts.get(i)) {
-                    if (block != link) block(html, block, image);
-                }
+                List<JSONObject> body = new ArrayList<>(posts.get(i));
+                body.remove(link);
+                renderBlocks(html, body, image);
             }
         } else if (blocks != null) {
+            List<JSONObject> all = new ArrayList<>();
             for (int i = 0; i < blocks.length(); ++i) {
                 JSONObject block = blocks.optJSONObject(i);
-                if (block != null) block(html, block, image);
+                if (block != null) all.add(block);
             }
+            renderBlocks(html, all, image);
         }
 
         String savedAt = document.optString("savedAt");
@@ -344,6 +363,38 @@ final class ReaderDocument {
             html.append("<div class='print-info'>Saved ").append(escape(savedAt)).append("<br>").append(escape(source)).append("</div>");
         }
         return html.append("</body></html>").toString();
+    }
+
+    /** Consecutive list items share open lists, so screen readers announce them as lists; other blocks close every open list. */
+    private static void renderBlocks(StringBuilder html, List<JSONObject> blocks, Function<String, String> image) {
+        List<String> open = new ArrayList<>();
+        for (JSONObject block : blocks) {
+            if (!"listItem".equals(block.optString("kind"))) {
+                closeLists(html, open, 0);
+                block(html, block, image);
+                continue;
+            }
+            int depth = Math.max(1, Math.min(8, block.optInt("depth", 1)));
+            String marker = block.optString("marker", "•");
+            boolean ordered = marker.matches("\\d+\\.");
+            String tag = ordered ? "ol" : "ul";
+            closeLists(html, open, depth);
+            if (open.size() == depth && open.get(depth - 1).equals(tag)) {
+                html.append("</li>");
+            } else {
+                closeLists(html, open, depth - 1);
+            }
+            while (open.size() < depth) {
+                html.append('<').append(tag).append('>');
+                open.add(tag);
+            }
+            html.append(ordered ? "<li value=\"" + marker.substring(0, marker.length() - 1) + "\">" : "<li>").append(inline(block));
+        }
+        closeLists(html, open, 0);
+    }
+
+    private static void closeLists(StringBuilder html, List<String> open, int level) {
+        while (open.size() > level) html.append("</li></").append(open.remove(open.size() - 1)).append('>');
     }
 
     private static void block(StringBuilder html, JSONObject block, Function<String, String> image) {
@@ -361,9 +412,6 @@ final class ReaderDocument {
                 break;
             case "quote":
                 html.append("<blockquote>").append(text).append("</blockquote>");
-                break;
-            case "listItem":
-                html.append("<p class='list-item' style='margin-left:").append(Math.max(0, Math.min(8, block.optInt("depth", 1)) - 1)).append("em'>").append(escape(block.optString("marker", "•"))).append(" ").append(text).append("</p>");
                 break;
             case "link":
                 if (webUrl(block.optString("url"))) {
@@ -387,7 +435,9 @@ final class ReaderDocument {
             default:
                 Matcher placeholder = PLACEHOLDER.matcher(block.optString("text").trim());
                 if (block.optJSONArray("runs") == null && placeholder.matches()) {
-                    html.append("<p class='note'>").append(escape(placeholder.group(1))).append("</p>");
+                    String note = escape(placeholder.group(1));
+                    String url = block.optString("url");
+                    html.append("<p class='note'>").append(webUrl(url) ? "<a href=\"" + escape(url) + "\">" + note + "</a>" : note).append("</p>");
                 } else {
                     html.append("<p>").append(text).append("</p>");
                 }
