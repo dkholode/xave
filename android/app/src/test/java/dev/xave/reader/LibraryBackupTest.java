@@ -191,4 +191,43 @@ public final class LibraryBackupTest {
             org.junit.Assert.fail("Wrote an article too large to restore");
         } catch (Exception expected) { }
     }
+
+    @Test public void articlesNestedTooDeeplyAreSkippedHoweverTheBracketsAreHidden() throws Exception {
+        File root = folder.newFolder("restored");
+        String deep = repeat('[', 100) + repeat(']', 100);
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "library/" + A + ".json", "{\"blocks\":" + deep + "}");
+            entry(zip, "library/" + B + ".json", "{\"a\":'" + repeat(']', 100) + "',\"blocks\":" + deep + "}");
+            entry(zip, "library/" + C + ".json", doc("Fine").toString());
+        }
+        assertEquals(1, LibraryBackup.read(asInput(backup), root));
+        assertTrue(new File(root, "library/" + C + ".json").isFile());
+    }
+
+    @Test public void aRestoreThatFailsWhilePublishingTakesBackWhatItAdded() throws Exception {
+        File root = folder.newFolder("restored");
+        File blocked = new File(root, "library/" + B + ".json.meta");
+        assertTrue(new File(blocked, "in-the-way").mkdirs());
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "library/" + A + ".json", doc("First").toString());
+            entry(zip, "images/" + A + "/0.jpg", new byte[]{1});
+            entry(zip, "library/" + B + ".json", doc("Second").toString());
+        }
+        try {
+            LibraryBackup.read(asInput(backup), root);
+            org.junit.Assert.fail("Reported a restore that could not write a summary");
+        } catch (Exception expected) { }
+        assertFalse(new File(root, "library/" + A + ".json").exists());
+        assertFalse(new File(root, "library/" + B + ".json").exists());
+        assertFalse(new File(root, "images/" + A).exists());
+    }
+
+    private static String repeat(char c, int count) {
+        char[] chars = new char[count];
+        java.util.Arrays.fill(chars, c);
+        return new String(chars);
+    }
 }
+

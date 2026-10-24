@@ -94,29 +94,42 @@ final class LibraryBackup {
                     Files.write(file.toPath(), bytes);
                 }
             }
-            int imported = 0;
-            for (String id : articles) {
-                File file = new File(library, id + ".json");
-                // A backup can predate edits made since, so the save already on the device wins.
-                if (file.exists()) continue;
-                File images = new File(new File(stage, "images"), id);
-                if (images.isDirectory()) {
-                    File target = DocumentFiles.images(file);
-                    delete(target);
-                    target.getParentFile().mkdirs();
-                    Files.move(images.toPath(), target.toPath());
+            List<File> added = new ArrayList<>();
+            try {
+                for (String id : articles) {
+                    File file = new File(library, id + ".json");
+                    // A backup can predate edits made since, so the save already on the device wins.
+                    if (file.exists()) continue;
+                    added.add(file);
+                    File images = new File(new File(stage, "images"), id);
+                    if (images.isDirectory()) {
+                        File target = DocumentFiles.images(file);
+                        delete(target);
+                        target.getParentFile().mkdirs();
+                        Files.move(images.toPath(), target.toPath());
+                    }
+                    Files.move(new File(new File(stage, "library"), file.getName()).toPath(), file.toPath());
+                    DocumentFiles.writeSummary(file, parse(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)));
                 }
-                Files.move(new File(new File(stage, "library"), file.getName()).toPath(), file.toPath());
-                DocumentFiles.writeSummary(file, parse(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)));
-                imported++;
+            } catch (Exception e) {
+                // A failed restore adds nothing, so whatever this one already moved in comes back out.
+                for (File file : added) {
+                    try { DocumentFiles.delete(file); } catch (Exception ignored) { }
+                    delete(DocumentFiles.images(file));
+                }
+                throw e;
             }
-            return imported;
+            return added.size();
         } finally {
             delete(stage);
         }
     }
 
-    /** Android's JSON parser recurses once per nesting level, so a deeply nested article could overflow the stack. */
+    /**
+     * Android's JSON parser recurses once per nesting level, so a deeply nested article could overflow the stack.
+     * The parser also accepts single-quoted strings and comments, which could hide brackets from this count, so
+     * those are refused here; Xave writes neither.
+     */
     private static boolean shallow(String text) {
         int depth = 0;
         boolean string = false;
@@ -124,8 +137,9 @@ final class LibraryBackup {
             char c = text.charAt(i);
             if (string) { if (c == '\\') i++; else if (c == '"') string = false; }
             else if (c == '"') string = true;
+            else if (c == '\'' || c == '/' || c == '#') return false;
             else if ((c == '{' || c == '[') && ++depth > 64) return false;
-            else if (c == '}' || c == ']') depth--;
+            else if ((c == '}' || c == ']') && --depth < 0) return false;
         }
         return true;
     }
