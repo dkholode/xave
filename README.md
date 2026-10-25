@@ -62,7 +62,10 @@ see [android/README.md](android/README.md).
 - Open the full reading view before capturing an X Article. Unusual Article
   layouts may capture incompletely.
 - Loaded images are saved within size and time limits. Missing images are
-  marked. Video, audio, and interactive widgets are not downloaded.
+  marked, and the save message counts them. Video, audio, and interactive
+  widgets are not downloaded.
+- A quoted post is saved as a link to it, not its text. Save it separately to
+  read it offline.
 - Capturing needs internet access. Saved reading blocks scripts and network
   loads. Opening a link to X takes you back online, and other links open in
   your browser.

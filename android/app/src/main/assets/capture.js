@@ -22,6 +22,44 @@
     && getComputedStyle(el).visibility !== 'hidden';
   const image = el => ({kind: 'image', url: el.currentSrc || el.src,
     text: el.alt || 'Image'});
+  // Only web links without credentials stay links; javascript: and user:pass@ links fall back to plain text.
+  const safeLink = href => {
+    try {
+      const link = new URL(href, source);
+      return /^https?:$/.test(link.protocol) && !link.username && !link.password ? link.href : null;
+    } catch (_) { return null; }
+  };
+  // Runs keep link destinations for the app to render. Like innerText they skip hidden text, and X shows post text pre-wrapped, so line breaks stay.
+  function textRuns(el) {
+    const runs = [];
+    const add = (text, url) => {
+      if (!text) return;
+      const last = runs[runs.length - 1];
+      if (last && last.url === url) last.text += text;
+      else runs.push(url ? {text, url} : {text});
+    };
+    const walk = node => {
+      if (node.nodeType === Node.TEXT_NODE) { add(node.textContent.replace(/\u00a0/g, ' ')); return; }
+      if (node.nodeType !== Node.ELEMENT_NODE || !visible(node) || node.tagName === 'IMG') return;
+      if (node.tagName === 'BR') { add('\n'); return; }
+      // innerText breaks the line around each block box, and `text` comes from innerText, so runs match it.
+      const block = /^(block|list-item)$/.test(getComputedStyle(node).display);
+      const newLine = () => { if (block && runs.length && !runs[runs.length - 1].text.endsWith('\n')) add('\n'); };
+      newLine();
+      const url = node.tagName === 'A' && node.hasAttribute('href') ? safeLink(node.getAttribute('href')) : null;
+      if (url) add(node.innerText.replace(/\u00a0/g, ' '), url);
+      else node.childNodes.forEach(walk);
+      newLine();
+    };
+    el.childNodes.forEach(walk);
+    while (runs.length && !runs[0].text.trim()) runs.shift();
+    while (runs.length && !runs[runs.length - 1].text.trim()) runs.pop();
+    if (runs.length) {
+      runs[0].text = runs[0].text.trimStart();
+      runs[runs.length - 1].text = runs[runs.length - 1].text.trimEnd();
+    }
+    return runs;
+  }
 
   // A post is named by its own timestamp link; links in its text, quoted posts, and ads don't count.
   function identify(card) {
@@ -47,14 +85,27 @@
       const text = own('[data-testid="tweetText"], [dir="auto"].whitespace-pre-wrap')[0];
       const blocks = [];
       // Empty text doesn't count, so a post X renders without readable content is refused instead of saved blank.
-      if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]') && clean(text.innerText))
-        blocks.push({kind: 'text', text: clean(text.innerText)});
+      if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]') && clean(text.innerText)) {
+        const runs = textRuns(text);
+        // Only posts with a real link carry runs, so every other post keeps the plain text block.
+        const block = {kind: 'text', text: clean(text.innerText)};
+        if (runs.some(run => run.url)) block.runs = runs;
+        blocks.push(block);
+      }
       // Photo containers inside quoted posts are deliberately excluded.
       own('[data-testid="tweetPhoto"] img, a[href*="/status/' + match[2] + '/photo/"] img').forEach(img => {
         if (visible(img)) blocks.push(image(img));
       });
       if (own('video').length) blocks.push({kind:'text', text:'[Video not saved offline — see original post]'});
-      if (card.querySelector('[data-testid="quoteTweet"], article')) blocks.push({kind:'text', text:'[Quoted post — see original]'});
+      const quote = card.querySelector('[data-testid="quoteTweet"], article');
+      if (quote) {
+        // Only the quote's timestamp link names it. Links in its text can point anywhere, so without one the note stays unlinked.
+        const quoted = quote.querySelector('time')?.closest('a');
+        const quotedMatch = quoted && new URL(quoted.getAttribute('href'), source).href.match(/\/([^/]+)\/status\/(\d+)/);
+        const placeholder = {kind:'text', text:'[Quoted post — see original]'};
+        if (quotedMatch) placeholder.url = 'https://x.com/' + quotedMatch[1] + '/status/' + quotedMatch[2];
+        blocks.push(placeholder);
+      }
       if (!blocks.length) return;
       blocks.push({kind: 'link', text: time?.dateTime || clean(timestamp.innerText) || 'Original post',
         url: 'https://x.com/' + match[1] + '/status/' + match[2]});
@@ -101,7 +152,8 @@
       const tag = node.tagName;
       if (/^H[1-6]$/.test(tag) && !skippedTitle && clean(node.innerText) === title) { skippedTitle = true; return; }
       if (tag === 'IMG') {
-        flush(); if (node.naturalWidth >= 120) blocks.push(image(node)); return;
+        // naturalWidth stays 0 until a lazy image loads, so an unloaded one is judged by its layout width instead.
+        flush(); if (node.naturalWidth >= 120 || node.naturalWidth === 0 && node.getBoundingClientRect().width >= 120) blocks.push(image(node)); return;
       }
       if (tag === 'VIDEO' || tag === 'IFRAME' || tag === 'AUDIO') {
         flush(); blocks.push({kind:'text', text:'[Embedded media not saved offline — see original]'}); return;
