@@ -8,9 +8,9 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -50,7 +50,7 @@ final class LibraryBackup {
             if (parse(new String(bytes, StandardCharsets.UTF_8)) == null) continue;
             total = count(total, bytes.length, TOTAL_BYTES);
             entries = count(entries);
-            put(zip, "library/" + article.getName(), bytes);
+            put(zip, "library/" + article.getName(), bytes, article.lastModified());
             File images = DocumentFiles.images(article);
             File[] files = images.listFiles();
             if (files != null) for (File image : files) {
@@ -59,11 +59,11 @@ final class LibraryBackup {
                 byte[] picture = Files.readAllBytes(image.toPath());
                 if (picture.length > ImageDownloads.MAX_IMAGE_BYTES) throw new Exception("An image is too large to back up");
                 total = count(total, picture.length, TOTAL_BYTES);
-                put(zip, "images/" + images.getName() + "/" + image.getName(), picture);
+                put(zip, "images/" + images.getName() + "/" + image.getName(), picture, 0);
             }
             written++;
         }
-        put(zip, COMPLETE, new byte[0]);
+        put(zip, COMPLETE, new byte[0], 0);
         zip.finish();
         return written;
     }
@@ -84,7 +84,8 @@ final class LibraryBackup {
         delete(stage);
         try {
             ZipInputStream zip = new ZipInputStream(in);
-            Set<String> articles = new LinkedHashSet<>();
+            // The library shows each article's file time as its save date and sorts by it, so the backup's time is put back.
+            Map<String, Long> articles = new LinkedHashMap<>();
             long total = 0;
             int entries = 0;
             boolean complete = false;
@@ -105,7 +106,7 @@ final class LibraryBackup {
                     File file = new File(new File(stage, "library"), article.group(1) + ".json");
                     file.getParentFile().mkdirs();
                     Files.write(file.toPath(), bytes);
-                    articles.add(article.group(1));
+                    articles.put(article.group(1), entry.getTime());
                 } else if (image.matches()) {
                     File file = new File(new File(new File(stage, "images"), image.group(1)), image.group(2));
                     file.getParentFile().mkdirs();
@@ -115,11 +116,14 @@ final class LibraryBackup {
             if (!complete) throw new Exception("Backup is incomplete");
             List<File> added = new ArrayList<>();
             try {
-                for (String id : articles) {
+                for (String id : articles.keySet()) {
                     File file = new File(library, id + ".json");
                     // A backup can predate edits made since, so the save already on the device wins.
                     if (file.exists()) continue;
                     added.add(file);
+                    // The article goes in before its images, so the startup sweep for orphaned images never sees them alone.
+                    Files.move(new File(new File(stage, "library"), file.getName()).toPath(), file.toPath());
+                    if (articles.get(id) > 0) file.setLastModified(articles.get(id));
                     File images = new File(new File(stage, "images"), id);
                     if (images.isDirectory()) {
                         File target = DocumentFiles.images(file);
@@ -127,14 +131,13 @@ final class LibraryBackup {
                         target.getParentFile().mkdirs();
                         Files.move(images.toPath(), target.toPath());
                     }
-                    Files.move(new File(new File(stage, "library"), file.getName()).toPath(), file.toPath());
                     DocumentFiles.writeSummary(file, parse(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)));
                 }
             } catch (Exception e) {
                 // A failed restore adds nothing, so whatever this one already moved in comes back out.
                 for (File file : added) {
                     try { DocumentFiles.delete(file); } catch (Exception ignored) { }
-                    delete(DocumentFiles.images(file));
+                    try { delete(DocumentFiles.images(file)); } catch (Exception ignored) { }
                 }
                 throw e;
             }
@@ -201,8 +204,10 @@ final class LibraryBackup {
         return total + bytes;
     }
 
-    private static void put(ZipOutputStream zip, String name, byte[] bytes) throws Exception {
-        zip.putNextEntry(new ZipEntry(name));
+    private static void put(ZipOutputStream zip, String name, byte[] bytes, long time) throws Exception {
+        ZipEntry entry = new ZipEntry(name);
+        if (time > 0) entry.setTime(time);
+        zip.putNextEntry(entry);
         zip.write(bytes);
         zip.closeEntry();
     }

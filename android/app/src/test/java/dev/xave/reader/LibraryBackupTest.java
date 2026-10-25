@@ -263,4 +263,19 @@ public final class LibraryBackupTest {
             org.junit.Assert.fail("Read a backup with more files than any library holds");
         } catch (Exception expected) { }
     }
+
+    @Test public void aRestoredArticleKeepsTheDateItWasSaved() throws Exception {
+        File library = folder.newFolder("source", "library");
+        File article = new File(library, A + ".json");
+        DocumentFiles.writeAtomic(article, doc("Saved last year").toString());
+        long savedAt = 1736942400000L;
+        assertTrue(article.setLastModified(savedAt));
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        LibraryBackup.write(library.getParentFile(), backup);
+
+        File root = folder.newFolder("restored");
+        LibraryBackup.read(asInput(backup), root);
+        long restoredAt = new File(root, "library/" + A + ".json").lastModified();
+        assertTrue("Restored with time " + restoredAt, Math.abs(restoredAt - savedAt) <= 2000);
+    }
 }
