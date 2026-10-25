@@ -134,24 +134,6 @@ final class ReaderDocument {
         return count;
     }
 
-    /** Posts in a thread capture, read from its title; 0 for an Article, even one titled like a thread. */
-    static int postCount(JSONObject document) {
-        Matcher thread = THREAD_TITLE.matcher(document.optString("title"));
-        try { return thread.matches() ? Integer.parseInt(thread.group(2)) : 0; }
-        catch (NumberFormatException tooLarge) { return 0; }
-    }
-
-    /** Image blocks in a capture, whether or not their files downloaded. */
-    static int imageCount(JSONObject document) {
-        JSONArray blocks = document.optJSONArray("blocks");
-        int count = 0;
-        for (int i = 0; blocks != null && i < blocks.length(); ++i) {
-            JSONObject block = blocks.optJSONObject(i);
-            if (block != null && "image".equals(block.optString("kind"))) ++count;
-        }
-        return count;
-    }
-
     private static String firstPost(JSONObject document) {
         JSONArray blocks = document.optJSONArray("blocks");
         for (int i = 0; blocks != null && i < blocks.length(); ++i) {
