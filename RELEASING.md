@@ -1,6 +1,6 @@
 # Releasing
 
-Pushing a tag such as `v0.3.0` makes the
+Pushing a tag such as `v0.3` makes the
 [Release workflow](.github/workflows/release.yml) build a signed APK and publish
 it as a GitHub release.
 
@@ -31,9 +31,13 @@ it as a GitHub release.
 2. Tag the commit and push the tag:
 
    ```bash
-   git tag v0.3.0
-   git push origin v0.3.0
+   git tag v0.3
+   git push origin v0.3
    ```
+
+The release notes open with install steps, the APK's SHA-256, and the signing
+certificate's SHA-256, followed by the titles of the pull requests merged since
+the last release. Title pull requests by what users get.
 
 ## Building a release locally
 
@@ -43,5 +47,6 @@ Without these variables, Gradle builds an unsigned release APK, which is what
 F-Droid expects.
 
 Release builds use a different key from local debug builds. To switch an
-installed debug build to a release build, export any articles you want to keep,
-then uninstall the debug build.
+installed debug build to a release build, back up the library with
+**⋮ > Back up library**, uninstall the debug build, install the release build,
+then use **⋮ > Restore a backup**.
