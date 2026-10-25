@@ -44,13 +44,17 @@ see [android/README.md](android/README.md).
    asking if it has fewer posts or images. A different post you tapped through
    to is saved separately. **‹** returns to the library, and a save that is
    still downloading images finishes in the background.
-5. In the reader, the **⋮** menu has text size, theme, export, the post on X,
-   and delete. **Prev / Next** page through it, and your position is saved.
+5. In the reader, the **⋮** menu has text size, find, theme, share link,
+   export, the post on X, and delete. **Prev / Next** page through it, and your
+   position is saved. Text starts at your system font size. After **Find**,
+   **Prev / Next** step through the matches; tap the match count to stop.
    **Export** saves a self-contained HTML file or opens Android's
    Print / Save as PDF dialog, if a print service is installed.
-6. To delete one or more items from the library, use **⋮ > Delete** there.
+6. **⋮ > Search** in the library finds saved items by their first line or
+   author, and Back closes it. To delete items, long-press one or use
+   **⋮ > Delete**.
 7. To always look over the page and tap **Capture** yourself, choose
-   **⋮ > Saving** in the library, then **Review the page, then tap Capture**.
+   **⋮ > Auto-save** in the library, then **Review the page, then tap Capture**.
 
 **Theme**, in the **⋮** menu, follows your system's dark mode by default. Choose
 **Light** on e-ink screens for the sharpest text.
@@ -75,8 +79,10 @@ see [android/README.md](android/README.md).
 Your library and X sign-in stay on your device. Xave has no account, server,
 analytics, or ads, and it doesn't use cloud backup. On Android 12 and later,
 Android's transfer to a new phone copies your library but not your sign-in.
-Uninstalling the app or clearing its data deletes the library, so export
-anything you want to keep separately.
+Uninstalling the app or clearing its data deletes the library. **⋮ > Back up
+library** saves it to one zip file, and **⋮ > Restore a backup** adds it back on
+this or another device. **⋮ > Sign out of X** removes your X sign-in and keeps
+the library.
 
 Xave saves pages you can already open in your own browser, for your personal
 reading. Respect content owners' rights and X's terms.

@@ -25,7 +25,7 @@ import org.json.JSONObject;
 /** Downloads a capture's images into its images folder so it reads offline. */
 final class ImageDownloads {
     private static final int MAX_IMAGES = 40;
-    private static final int MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+    static final int MAX_IMAGE_BYTES = 4 * 1024 * 1024;
     private static final int MAX_TOTAL_BYTES = 16 * 1024 * 1024;
     private static final long TIME_LIMIT_SECONDS = 45;
 
