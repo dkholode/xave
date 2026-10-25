@@ -110,6 +110,7 @@ public final class LibraryBackupTest {
         entry(zip, "images/" + A + "/../../x.png", new byte[]{1});
         entry(zip, "library/" + B + ".json", "not json");
         entry(zip, "library/" + C + ".json", doc("Valid article").toString());
+        entry(zip, LibraryBackup.COMPLETE, new byte[0]);
         zip.close();
 
         assertEquals(1, LibraryBackup.read(asInput(backup), root));
@@ -125,6 +126,7 @@ public final class LibraryBackupTest {
         ByteArrayOutputStream backup = new ByteArrayOutputStream();
         ZipOutputStream zip = new ZipOutputStream(backup);
         entry(zip, "images/" + C + "/0.jpg", new byte[]{1, 2, 3});
+        entry(zip, LibraryBackup.COMPLETE, new byte[0]);
         zip.close();
 
         File root = folder.newFolder("restored");
@@ -149,7 +151,7 @@ public final class LibraryBackupTest {
             names.add(entry.getName());
             entry = zip.getNextEntry();
         }
-        assertEquals(java.util.Collections.singletonList("library/" + A + ".json"), names);
+        assertEquals(java.util.Arrays.asList("library/" + A + ".json", LibraryBackup.COMPLETE), names);
     }
 
     @Test public void aRestoreThatFailsPartWayLeavesTheLibraryAsItWas() throws Exception {
@@ -158,6 +160,7 @@ public final class LibraryBackupTest {
         try (ZipOutputStream zip = new ZipOutputStream(backup)) {
             entry(zip, "library/" + A + ".json", doc("First article").toString());
             entry(zip, "images/" + A + "/0.jpg", new byte[ImageDownloads.MAX_IMAGE_BYTES + 1]);
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
         }
         try {
             LibraryBackup.read(asInput(backup), root);
@@ -173,6 +176,7 @@ public final class LibraryBackupTest {
         try (ZipOutputStream zip = new ZipOutputStream(backup)) {
             entry(zip, "unrelated.bin", new byte[2000]);
             entry(zip, "library/" + A + ".json", doc("First article").toString());
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
         }
         try {
             LibraryBackup.read(asInput(backup), root, 1000);
@@ -201,6 +205,7 @@ public final class LibraryBackupTest {
             entry(zip, "library/" + A + ".json", doc("First").toString());
             entry(zip, "images/" + A + "/0.jpg", new byte[]{1});
             entry(zip, "library/" + B + ".json", doc("Second").toString());
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
         }
         try {
             LibraryBackup.read(asInput(backup), root);
@@ -210,5 +215,52 @@ public final class LibraryBackupTest {
         assertFalse(new File(root, "library/" + B + ".json").exists());
         assertFalse(new File(root, "images/" + A).exists());
     }
-}
 
+    @Test public void anArticleNestedDeeperThanAnyCaptureIsNotRestored() throws Exception {
+        Object title = "Deep";
+        for (int i = 0; i < 40; i++) title = new JSONArray().put(title);
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "library/" + A + ".json", doc("Fine").put("title", title).toString());
+            entry(zip, "library/" + B + ".json", doc("Fine").toString());
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
+        }
+        File root = folder.newFolder("restored");
+        assertEquals(1, LibraryBackup.read(asInput(backup), root));
+        assertFalse(new File(root, "library/" + A + ".json").exists());
+        assertTrue(new File(root, "library/" + B + ".json").isFile());
+    }
+
+    @Test public void aBackupCutOffBetweenEntriesRestoresNothing() throws Exception {
+        File library = folder.newFolder("source", "library");
+        DocumentFiles.writeAtomic(new File(library, A + ".json"), doc("First article").toString());
+        DocumentFiles.writeAtomic(new File(library, B + ".json"), doc("Second article").toString());
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        LibraryBackup.write(library.getParentFile(), backup);
+        byte[] whole = backup.toByteArray();
+        int second = -1;
+        for (int i = 1; i + 3 < whole.length && second < 0; i++) {
+            if (whole[i] == 'P' && whole[i + 1] == 'K' && whole[i + 2] == 3 && whole[i + 3] == 4) second = i;
+        }
+        assertTrue(second > 0);
+
+        File root = folder.newFolder("restored");
+        try {
+            LibraryBackup.read(new ByteArrayInputStream(java.util.Arrays.copyOf(whole, second + 10)), root);
+            org.junit.Assert.fail("Restored part of a backup that was cut off");
+        } catch (Exception expected) { }
+        assertEquals(0, new File(root, "library").list().length);
+    }
+
+    @Test public void aBackupWithTooManyFilesIsRefused() throws Exception {
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            for (int i = 0; i < LibraryBackup.MAX_ENTRIES; i++) entry(zip, "unrelated/" + i, new byte[0]);
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
+        }
+        try {
+            LibraryBackup.read(asInput(backup), folder.newFolder("restored"));
+            org.junit.Assert.fail("Read a backup with more files than any library holds");
+        } catch (Exception expected) { }
+    }
+}
