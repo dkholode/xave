@@ -74,6 +74,19 @@
     return match ? {card, own, time, timestamp, match} : null;
   }
 
+  // A post is named by its own timestamp link; links in its text, quoted posts, and ads don't count.
+  function identify(card) {
+    const own = selector => [...card.querySelectorAll(selector)].filter(el =>
+      el.closest('article') === card && !el.closest('[data-testid="quoteTweet"]'));
+    if (card.querySelector('[data-testid="placementTracking"]') || /\b(Ad|Promoted)\b/.test(card.querySelector('[data-testid="socialContext"]')?.innerText || '')) return null;
+    const time = own('time')[0];
+    // Anonymous X pages use semantic articles and timestamp links, without test IDs.
+    const timestamp = time?.closest('a') || own('a[href*="ct=engagement_view_post"]')[0];
+    const link = timestamp ? new URL(timestamp.getAttribute('href'), source).href : '';
+    const match = link.match(/\/([^/]+)\/status\/(\d+)/);
+    return match ? {card, own, time, timestamp, match} : null;
+  }
+
   function scan() {
     if (!isX || !status || pageKey(location.href) !== key) return;
     const found = [...document.querySelectorAll('article')].map(identify).filter(Boolean);
