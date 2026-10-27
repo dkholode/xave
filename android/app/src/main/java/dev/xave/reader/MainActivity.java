@@ -84,7 +84,10 @@ public class MainActivity extends Activity {
     private TextView readingProgress;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     // Image downloads run apart from io so they never delay opening, saving, or exporting articles.
-    private final ExecutorService captures = Executors.newSingleThreadExecutor();
+    // Static and never shut down, so a capture finishing after its screen closed still saves.
+    private static final ExecutorService captures = Executors.newSingleThreadExecutor();
+    // Held while deleting an article and while a save rewrites one, so a deleted save never comes back.
+    private static final Object deleting = new Object();
     private boolean pageFailed;
     private boolean foreground;
     // Orphaned images come only from a process that died mid-capture, so one check per process is enough.
@@ -107,6 +110,8 @@ public class MainActivity extends Activity {
     private static WeakReference<MainActivity> onScreen = new WeakReference<>(null);
     // The post whose saved copy this screen already looked up.
     private String checkedKey;
+    // Set until that lookup finishes, so an automatic capture can't save a copy it would have found.
+    private boolean lookingUp;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable poll = this::pollStatus;
     private final Set<File> selected = new HashSet<>();
@@ -467,7 +472,7 @@ public class MainActivity extends Activity {
         io.execute(() -> {
             int failed = 0;
             for (File target : targets) {
-                try { DocumentFiles.delete(target); } catch (Exception e) { failed++; }
+                try { synchronized (deleting) { DocumentFiles.delete(target); } } catch (Exception e) { failed++; }
             }
             int missed = failed, done = targets.size() - failed;
             runOnUiThread(() -> {
@@ -571,7 +576,7 @@ public class MainActivity extends Activity {
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
         else destroySource();
-        layout("online"); document = null; currentFile = null; replacing = replaces; checkedKey = ReaderDocument.postKey(url);
+        layout("online"); document = null; currentFile = null; replacing = replaces; checkedKey = ReaderDocument.postKey(url); lookingUp = false;
         // A recapture is for loading more of the page first, so only a new link saves without a tap.
         autoSave = replaces == null && !review && !getPreferences(0).getBoolean("review", false) ? new AutoSave(SystemClock.uptimeMillis()) : null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
@@ -617,10 +622,12 @@ public class MainActivity extends Activity {
                 }
                 if (autoSave != null && key != null && !key.equals(checkedKey) && !saving.contains(key)) {
                     checkedKey = key;
+                    lookingUp = true;
                     int token = generation;
                     io.execute(() -> {
                         File saved = findSaved(key);
                         runOnUiThread(() -> {
+                            if (key.equals(checkedKey)) lookingUp = false;
                             if (saved == null || token != generation || autoSave == null || busy) return;
                             autoSave = null;
                             openSaved(saved);
@@ -668,7 +675,7 @@ public class MainActivity extends Activity {
                 if (autoSave != null) {
                     AutoSave.Step step = autoSave.next(found, SystemClock.uptimeMillis());
                     if (step == AutoSave.Step.THREAD) stopAutoSave("This is a thread. Scroll to load the posts you want, then tap Capture. Replies aren't saved.");
-                    else if (step == AutoSave.Step.SAVE) { stopAutoSave(REVIEW_TIP); capture(); }
+                    else if (step == AutoSave.Step.SAVE && !lookingUp) { stopAutoSave(REVIEW_TIP); capture(); }
                 }
             } catch (Exception | StackOverflowError ignored) { }
         });
@@ -773,10 +780,12 @@ public class MainActivity extends Activity {
                     (finished, count) -> runOnUiThread(() -> {
                         if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
                     }));
-                // Deleted while its images downloaded; rewriting it would bring it back.
-                if (!file.exists()) return;
                 try {
-                    writeAtomic(file, doc.toString());
+                    synchronized (deleting) {
+                        // Deleted while its images downloaded; rewriting it would bring it back.
+                        if (!file.exists()) return;
+                        writeAtomic(file, doc.toString());
+                    }
                 } catch (Exception e) {
                     runOnUiThread(() -> {
                         if (token == generation) { busy = false; error("Saved without images. Check available storage and retry."); }
@@ -1011,7 +1020,7 @@ public class MainActivity extends Activity {
                 busy = true; int token = generation;
                 io.execute(() -> {
                     try {
-                        DocumentFiles.delete(target);
+                        synchronized (deleting) { DocumentFiles.delete(target); }
                         runOnUiThread(() -> { if (token == generation) {
                             showLibrary();
                             // Cleared after leaving the reader, which records the position on exit.
@@ -1185,7 +1194,6 @@ public class MainActivity extends Activity {
         if (browser != null) browser.destroy();
         destroySource();
         io.shutdown();
-        captures.shutdown();
         super.onDestroy();
     }
     private void error(String message) {

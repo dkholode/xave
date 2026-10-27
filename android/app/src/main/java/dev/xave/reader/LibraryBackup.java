@@ -174,8 +174,8 @@ final class LibraryBackup {
 
     /**
      * Counts nesting and values in one pass, skipping string contents, so an article over a limit is never built. The
-     * lenient parser also takes comments, single quotes, and ';' separators, which could hide values from this count,
-     * so anything outside a string that saved JSON never contains is refused.
+     * lenient parser also takes comments, single quotes, ';' separators, and unquoted words that run into a '"', which
+     * could hide values from this count, so anything outside a string that saved JSON never contains is refused.
      */
     private static boolean withinLimits(String text) {
         int depth = 0;
@@ -186,13 +186,15 @@ final class LibraryBackup {
             if (inString) {
                 if (c == '\\') i++;
                 else if (c == '"') inString = false;
-            } else if (c == '"') inString = true;
-            else if (c == '{' || c == '[') {
+            } else if (c == '"') {
+                if (i > 0 && isLiteral(text.charAt(i - 1))) return false;
+                inString = true;
+            } else if (c == '{' || c == '[') {
                 if (++depth > MAX_DEPTH) return false;
                 values++;
             } else if (c == '}' || c == ']') depth--;
             else if (c == ',') values++;
-            else if (c != ':' && !Character.isWhitespace(c) && !isLiteral(c)) return false;
+            else if (c != ':' && c != ' ' && c != '\t' && c != '\n' && c != '\r' && !isLiteral(c)) return false;
             if (values > MAX_VALUES) return false;
         }
         return true;
