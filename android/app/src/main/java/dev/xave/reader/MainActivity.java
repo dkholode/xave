@@ -672,10 +672,10 @@ public class MainActivity extends Activity {
                 status.setText(found.getBoolean("article") ? "X Article loaded"
                     : posts > 0 ? posts + (posts == 1 ? " post loaded" : " posts loaded")
                     : found.getBoolean("status") ? "Loading posts…" : "Ready");
-                if (autoSave != null) {
+                if (autoSave != null && !lookingUp) {
                     AutoSave.Step step = autoSave.next(found, SystemClock.uptimeMillis());
                     if (step == AutoSave.Step.THREAD) stopAutoSave("This is a thread. Scroll to load the posts you want, then tap Capture. Replies aren't saved.");
-                    else if (step == AutoSave.Step.SAVE && !lookingUp) { stopAutoSave(REVIEW_TIP); capture(); }
+                    else if (step == AutoSave.Step.SAVE) { stopAutoSave(REVIEW_TIP); capture(); }
                 }
             } catch (Exception | StackOverflowError ignored) { }
         });
