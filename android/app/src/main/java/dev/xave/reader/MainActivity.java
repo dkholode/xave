@@ -627,8 +627,10 @@ public class MainActivity extends Activity {
                     io.execute(() -> {
                         File saved = findSaved(key);
                         runOnUiThread(() -> {
-                            if (key.equals(checkedKey)) lookingUp = false;
-                            if (saved == null || token != generation || autoSave == null || busy) return;
+                            boolean current = key.equals(checkedKey);
+                            if (current) lookingUp = false;
+                            if (saved == null || !current || browser == null || !key.equals(ReaderDocument.postKey(browser.getUrl()))
+                                || token != generation || autoSave == null || busy) return;
                             autoSave = null;
                             openSaved(saved);
                             Toast.makeText(MainActivity.this, "Already saved. To capture it again, use ⋮ > Open on X.", Toast.LENGTH_LONG).show();
@@ -723,7 +725,8 @@ public class MainActivity extends Activity {
                         ? CookieManager.getInstance().getCookie(b.optString("url")) : null);
                 }
                 if (replaces == null) { save(doc, cookies, userAgent, null, token); return; }
-                io.execute(() -> {
+                // On captures, not io, because io stops when this screen closes and the recapture must still save.
+                captures.execute(() -> {
                     JSONObject old;
                     try { old = readSavedDocument(replaces); } catch (Exception e) { old = null; }
                     JSONObject saved = old;

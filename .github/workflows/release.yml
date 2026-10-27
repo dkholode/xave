@@ -34,7 +34,7 @@ jobs:
           prev=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
           if [ -n "$prev" ]; then
             prev_code=$(git show "$prev:android/app/build.gradle" | sed -n 's/^ *versionCode \([0-9]*\)$/\1/p')
-            if [ "$version_code" -le "$prev_code" ]; then
+            if ! [ "$version_code" -gt "$prev_code" ]; then
               echo "::error::versionCode $version_code must be greater than $prev_code from $prev."
               exit 1
             fi

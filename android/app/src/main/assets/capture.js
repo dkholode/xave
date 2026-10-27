@@ -118,8 +118,16 @@
       if (!blocks.length) return;
       blocks.push({kind: 'link', text: time?.dateTime || clean(timestamp.innerText) || 'Original post',
         url: 'https://x.com/' + match[1] + '/status/' + match[2]});
-      // X re-renders a post scrolled out of view collapsed behind "Show more", so keep the longer copy already captured.
-      if (posts.has(match[2]) && textLength(blocks) < textLength(posts.get(match[2]).blocks)) return;
+      // X re-renders a post scrolled out of view collapsed behind "Show more", so keep the longer copy already captured,
+      // adding any photo that loaded since.
+      const kept = posts.get(match[2])?.blocks;
+      if (kept && textLength(blocks) < textLength(kept)) {
+        const urls = new Set(kept.filter(b => b.kind === 'image').map(b => b.url));
+        const added = blocks.filter(b => b.kind === 'image' && !urls.has(b.url));
+        const at = kept.map(b => b.kind).lastIndexOf('image') + 1 || 1;
+        if (added.length) kept.splice(at, 0, ...added);
+        return;
+      }
       posts.set(match[2], {id: match[2], blocks});
     });
   }
@@ -167,7 +175,7 @@
       if (node.nodeType !== Node.ELEMENT_NODE || node.matches(excluded) || !visible(node)) return;
       if (xArticle && (node.matches('[data-testid="twitter-article-title"]')
           || node.getAttribute('role') === 'group' && !xBody?.contains(node))) return;
-      if (node !== root && node.matches('article, [data-testid="tweet"], [data-testid="quoteTweet"]')) { flush(); blocks.push(quotePlaceholder(node)); return; }
+      if (node !== root && !node.contains(xBody) && node.matches('article, [data-testid="tweet"], [data-testid="quoteTweet"]')) { flush(); blocks.push(quotePlaceholder(node)); return; }
       const tag = node.tagName;
       if (/^H[1-6]$/.test(tag) && !skippedTitle && clean(node.innerText) === title) { skippedTitle = true; return; }
       if (tag === 'IMG') {
@@ -216,7 +224,7 @@
     }
     if (!xArticle) {
       const cover = document.querySelector('[data-article-part="cover"] img');
-      if (cover) blocks.push(image(cover));
+      if (cover && !root.contains(cover)) blocks.push(image(cover));
     }
     walk(root); flush();
     return {title, blocks};

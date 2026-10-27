@@ -103,6 +103,16 @@ test('A collapsed re-render never replaces an expanded post', () => {
   assert(texts.includes('All of the already expanded content'), 'Collapsed re-render replaced the expanded post');
   assert(!texts.includes('All of…'), 'Kept the collapsed text'); f.close();
 });
+test('A photo that loads after the post collapses is kept with the expanded text', () => {
+  const f = fixture(post('alice', root, 'All of the already expanded content'), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.doc.querySelector('[data-testid="tweetText"]').textContent = 'All of…';
+  f.doc.querySelector('article').insertAdjacentHTML('beforeend', '<div data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/late.jpg" alt="A late photo"></div>');
+  f.summary();
+  const blocks = f.capture().blocks;
+  assert(blocks.some(b => b.kind === 'text' && b.text === 'All of the already expanded content'), 'Lost the expanded text: ' + JSON.stringify(blocks));
+  assert(blocks.some(b => b.kind === 'image' && b.url === 'https://pbs.twimg.com/media/late.jpg'), 'Lost the late photo: ' + JSON.stringify(blocks)); f.close();
+});
 test('Navigating to another post resets the collector', () => {
   const f = fixture(post('alice', root, 'First thread'), `https://x.com/alice/status/${root}`);
   f.location.href = `https://x.com/bob/status/${reply}`;
@@ -266,6 +276,16 @@ test('Numbered and nested lists, heading levels, quotes, and code indentation su
   assert(blocks.some(b => b.kind === 'listItem' && b.depth === 2 && b.text === 'Nested point'), 'Lost nested list');
   assert(blocks.some(b => b.kind === 'quote' && b.text === 'A useful quote.'), 'Lost quote');
   assert(blocks.some(b => b.kind === 'code' && b.text.startsWith('  indented')), 'Trimmed code indentation'); f.close();
+});
+test('An X Article body wrapped in its own article element is still captured', () => {
+  const f = fixture(`<main><article data-testid="twitterArticleReadView"><div data-testid="twitter-article-title">Wrapped</div><article><div data-testid="twitterArticleRichTextView"><p>${paragraph}</p></div></article></article></main>`, `https://x.com/alice/status/${root}`);
+  const doc = f.capture();
+  assert(doc.blocks && doc.blocks.some(b => b.kind === 'text' && b.text === paragraph.trim()), 'Lost the wrapped body: ' + JSON.stringify(doc).slice(0, 300)); f.close();
+});
+test('An Article cover inside the body is saved once', () => {
+  const f = fixture(`<main><article><div dir="auto" class="whitespace-pre-wrap"></div><h1 data-article-part="title">Cover inside</h1><div data-article-part="body"><div data-article-part="cover"><img width="400" height="200" src="https://pbs.twimg.com/media/cover.jpg"></div><p>${paragraph}</p></div></article></main>`, `https://x.com/alice/status/${root}`);
+  const covers = f.capture().blocks.filter(b => b.kind === 'image' && b.url === 'https://pbs.twimg.com/media/cover.jpg');
+  assert(covers.length === 1, 'Cover saved ' + covers.length + ' times'); f.close();
 });
 test('Emoji images inside an X Article paragraph do not split it', () => {
   const f = xArticle('Emoji article', `<p>${paragraph}I <img alt="❤️" src="https://abs-0.twimg.com/emoji/v2/svg/2764.svg"> this.</p>`);
