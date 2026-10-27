@@ -627,10 +627,10 @@ public class MainActivity extends Activity {
                     io.execute(() -> {
                         File saved = findSaved(key);
                         runOnUiThread(() -> {
-                            boolean current = key.equals(checkedKey);
+                            boolean current = token == generation && key.equals(checkedKey);
                             if (current) lookingUp = false;
                             if (saved == null || !current || browser == null || !key.equals(ReaderDocument.postKey(browser.getUrl()))
-                                || token != generation || autoSave == null || busy) return;
+                                || autoSave == null || busy) return;
                             autoSave = null;
                             openSaved(saved);
                             Toast.makeText(MainActivity.this, "Already saved. To capture it again, use ⋮ > Open on X.", Toast.LENGTH_LONG).show();

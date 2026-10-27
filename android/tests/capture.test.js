@@ -103,6 +103,16 @@ test('A collapsed re-render never replaces an expanded post', () => {
   assert(texts.includes('All of the already expanded content'), 'Collapsed re-render replaced the expanded post');
   assert(!texts.includes('All of…'), 'Kept the collapsed text'); f.close();
 });
+test('A quoted post that loads after the post collapses does not replace the expanded text', () => {
+  const f = fixture(post('alice', root, 'All of the already expanded content'), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.doc.querySelector('[data-testid="tweetText"]').textContent = 'All of…';
+  f.doc.querySelector('article').insertAdjacentHTML('beforeend', '<div data-testid="quoteTweet"><div data-testid="tweetText">Quoted words</div></div>');
+  f.summary();
+  const blocks = f.capture().blocks;
+  assert(blocks.some(b => b.kind === 'text' && b.text === 'All of the already expanded content'), 'Collapsed text replaced the expanded text: ' + JSON.stringify(blocks));
+  assert(blocks.some(b => b.text === '[Quoted post — see original]'), 'Lost the quoted post note: ' + JSON.stringify(blocks)); f.close();
+});
 test('A photo that loads after the post collapses is kept with the expanded text', () => {
   const f = fixture(post('alice', root, 'All of the already expanded content'), `https://x.com/alice/status/${root}`);
   f.summary();

@@ -23,7 +23,6 @@
   const image = el => ({kind: 'image', url: el.currentSrc || el.src,
     text: el.alt || 'Image'});
   const emoji = el => (el.currentSrc || el.src || '').includes('/emoji/') && !!el.alt;
-  const textLength = blocks => blocks.reduce((sum, b) => sum + (b.kind === 'text' ? b.text.length : 0), 0);
   // Only web links without credentials stay links; javascript: and user:pass@ links fall back to plain text.
   const safeLink = href => {
     try {
@@ -96,16 +95,17 @@
       if (!author || match[1].toLowerCase() !== author) return;
       const text = own('[data-testid="tweetText"], [dir="auto"].whitespace-pre-wrap')[0];
       const blocks = [];
+      let body = null;
       // Empty text doesn't count, so a post X renders without readable content is refused instead of saved blank.
       if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]')) {
         const runs = textRuns(text);
         // innerText drops emoji alt text, so a post with emoji images takes its text from the runs.
-        const body = [...text.querySelectorAll('img')].some(emoji) ? clean(runs.map(run => run.text).join('')) : clean(text.innerText);
-        if (body) {
+        const words = [...text.querySelectorAll('img')].some(emoji) ? clean(runs.map(run => run.text).join('')) : clean(text.innerText);
+        if (words) {
           // Only posts with a real link carry runs, so every other post keeps the plain text block.
-          const block = {kind: 'text', text: body};
-          if (runs.some(run => run.url)) block.runs = runs;
-          blocks.push(block);
+          body = {kind: 'text', text: words};
+          if (runs.some(run => run.url)) body.runs = runs;
+          blocks.push(body);
         }
       }
       // Photo containers inside quoted posts are deliberately excluded.
@@ -118,17 +118,14 @@
       if (!blocks.length) return;
       blocks.push({kind: 'link', text: time?.dateTime || clean(timestamp.innerText) || 'Original post',
         url: 'https://x.com/' + match[1] + '/status/' + match[2]});
-      // X re-renders a post scrolled out of view collapsed behind "Show more", so keep the longer copy already captured,
-      // adding any photo that loaded since.
-      const kept = posts.get(match[2])?.blocks;
-      if (kept && textLength(blocks) < textLength(kept)) {
-        const urls = new Set(kept.filter(b => b.kind === 'image').map(b => b.url));
-        const added = blocks.filter(b => b.kind === 'image' && !urls.has(b.url));
-        const at = kept.map(b => b.kind).lastIndexOf('image') + 1 || 1;
-        if (added.length) kept.splice(at, 0, ...added);
-        return;
+      // X re-renders a post scrolled out of view collapsed behind "Show more", so the longer text already captured
+      // takes the place of the newer render's.
+      const kept = posts.get(match[2])?.body;
+      if (kept && (!body || body.text.length < kept.text.length)) {
+        if (body) blocks[0] = kept; else blocks.unshift(kept);
+        body = kept;
       }
-      posts.set(match[2], {id: match[2], blocks});
+      posts.set(match[2], {id: match[2], blocks, body});
     });
   }
 
