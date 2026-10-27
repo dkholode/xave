@@ -212,6 +212,14 @@ final class ReaderDocument {
         }
     }
 
+    /** A page off X could otherwise claim any post, so a capture counts only from the X post its source names. */
+    static boolean capturedFrom(String page, String source) {
+        String key = postKey(page);
+        if (key == null || !key.equals(postKey(source))) return false;
+        URI uri = URI.create(page);
+        return "https".equalsIgnoreCase(uri.getScheme()) && xHost(uri.getHost());
+    }
+
     /**
      * The link to open from shared text: its first X link, else its first t.co link, else its first web link, else null.
      * A post shared with its text can carry a t.co link of its own before the post's link.

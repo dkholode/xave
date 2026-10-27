@@ -235,6 +235,15 @@ public final class ReaderDocumentTest {
         assertFalse(ReaderDocument.capturable("https://t.co.evil.example/x"));
     }
 
+    @Test public void capturesAreAcceptedOnlyFromTheXPostTheyName() {
+        assertTrue(ReaderDocument.capturedFrom("https://x.com/alice/status/1?s=20", "https://x.com/alice/status/1"));
+        assertTrue(ReaderDocument.capturedFrom("https://mobile.twitter.com/alice/status/1", "https://x.com/alice/status/1"));
+        assertFalse("A page off X claimed a post", ReaderDocument.capturedFrom("https://evil.example/alice/status/1", "https://x.com/alice/status/1"));
+        assertFalse(ReaderDocument.capturedFrom("https://x.com/alice/status/1", "https://x.com/alice/status/2"));
+        assertFalse(ReaderDocument.capturedFrom("http://x.com/alice/status/1", "https://x.com/alice/status/1"));
+        assertFalse(ReaderDocument.capturedFrom(null, "https://x.com/alice/status/1"));
+    }
+
     @Test public void storedImagesRenderByNameAndUnsafeNamesFallBackToPlaceholders() throws Exception {
         JSONObject pictured = new JSONObject().put("blocks", new JSONArray()
             .put(new JSONObject().put("kind", "image").put("file", "0.jpg").put("text", "A chart"))

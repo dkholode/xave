@@ -36,9 +36,9 @@ Xave captures content from X, so it treats every page as untrusted:
 - A library backup holds only saved articles and their images. Restoring one
   treats it as untrusted: only article and image entries with the expected
   names are kept, every entry counts toward a size cap and a file count cap, an
-  article that isn't valid JSON or is nested deeper than any capture is
-  skipped, a backup cut off before its end is refused, existing saves are never
-  overwritten, a restore that fails partway adds nothing, and library rows are
-  rebuilt from the articles.
+  article that isn't valid JSON, is nested deeper than any capture, or holds
+  more values than any capture is skipped, a backup cut off before its end is
+  refused, existing saves are never overwritten, a restore that fails partway
+  adds nothing, and library rows are rebuilt from the articles.
 
 Reports that bypass any of these are in scope.

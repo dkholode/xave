@@ -27,7 +27,8 @@ it as a GitHub release.
 ## Each release
 
 1. Increase `versionCode` and update `versionName` in
-   `android/app/build.gradle`, then merge the change to `main`.
+   `android/app/build.gradle`, then merge the change to `main`. The workflow
+   refuses a tag that doesn't match `versionName` or doesn't raise `versionCode`.
 2. Tag the commit and push the tag:
 
    ```bash

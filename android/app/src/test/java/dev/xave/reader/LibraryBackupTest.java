@@ -231,6 +231,33 @@ public final class LibraryBackupTest {
         assertTrue(new File(root, "library/" + B + ".json").isFile());
     }
 
+    @Test public void anArticleHoldingMoreValuesThanAnyCaptureIsNotRestored() throws Exception {
+        StringBuilder blocks = new StringBuilder();
+        for (int i = 0; i < 600_000; i++) blocks.append("{},");
+        String article = "{\"title\":\"t\",\"source\":\"https://x.com/a/status/1\",\"blocks\":[" + blocks + "{}]}";
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "library/" + A + ".json", article);
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
+        }
+        File root = folder.newFolder("restored");
+        assertEquals(0, LibraryBackup.read(asInput(backup), root));
+        assertEquals(0, new File(root, "library").list().length);
+    }
+
+    @Test public void anArticleHidingValuesBehindASingleQuotedKeyIsNotRestored() throws Exception {
+        StringBuilder blocks = new StringBuilder();
+        for (int i = 0; i < 600_000; i++) blocks.append("{},");
+        String article = "{'\"':1,\"title\":\"t\",\"source\":\"https://x.com/a/status/1\",\"blocks\":[" + blocks + "{}]}";
+        ByteArrayOutputStream backup = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(backup)) {
+            entry(zip, "library/" + A + ".json", article);
+            entry(zip, LibraryBackup.COMPLETE, new byte[0]);
+        }
+        File root = folder.newFolder("restored");
+        assertEquals(0, LibraryBackup.read(asInput(backup), root));
+    }
+
     @Test public void aBackupCutOffBetweenEntriesRestoresNothing() throws Exception {
         File library = folder.newFolder("source", "library");
         DocumentFiles.writeAtomic(new File(library, A + ".json"), doc("First article").toString());

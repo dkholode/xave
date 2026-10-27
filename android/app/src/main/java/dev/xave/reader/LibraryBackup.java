@@ -6,8 +6,6 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +14,6 @@ import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -27,6 +24,8 @@ final class LibraryBackup {
     static final int MAX_ENTRIES = 50_000;
     // A capture nests about 5 levels deep; rendering and summaries recurse through every level.
     private static final int MAX_DEPTH = 32;
+    // A capture holds far fewer values, and an article with more could exhaust memory while it parses.
+    private static final int MAX_VALUES = 500_000;
     // ZipInputStream reads a backup cut off between entries as one that ended there, so write() puts this last and read() requires it.
     static final String COMPLETE = "backup-complete";
     // Whole-name matching is the zip-slip guard: a name with ".." or a leading "/" fails the match and is never written.
@@ -164,34 +163,43 @@ final class LibraryBackup {
     }
 
     /**
-     * Android's lenient JSON parser recurses once per nesting level, and a backup's article is untrusted, so one
-     * nested deeply enough to overflow the stack is refused like any other unreadable article.
+     * Android's lenient JSON parser recurses once per nesting level and builds every value, and a backup's article is
+     * untrusted. So an article is checked for depth and value count before it is parsed, and one past either limit is
+     * refused like any other unreadable article.
      */
     private static JSONObject parse(String text) {
-        try {
-            JSONObject document = new JSONObject(text);
-            return shallow(document) ? document : null;
-        } catch (JSONException | StackOverflowError notAnArticle) { return null; }
+        if (!withinLimits(text)) return null;
+        try { return new JSONObject(text); } catch (JSONException | StackOverflowError notAnArticle) { return null; }
     }
 
-    /** Walks one nesting level at a time instead of recursing, so the check itself can't overflow the stack. */
-    private static boolean shallow(JSONObject document) {
-        List<Object> level = Collections.singletonList(document);
-        for (int depth = 0; !level.isEmpty(); depth++) {
-            if (depth > MAX_DEPTH) return false;
-            List<Object> next = new ArrayList<>();
-            for (Object value : level) {
-                if (value instanceof JSONObject) {
-                    JSONObject object = (JSONObject) value;
-                    for (Iterator<String> keys = object.keys(); keys.hasNext(); ) next.add(object.opt(keys.next()));
-                } else if (value instanceof JSONArray) {
-                    JSONArray array = (JSONArray) value;
-                    for (int i = 0; i < array.length(); i++) next.add(array.opt(i));
-                }
-            }
-            level = next;
+    /**
+     * Counts nesting and values in one pass, skipping string contents, so an article over a limit is never built. The
+     * lenient parser also takes comments, single quotes, and ';' separators, which could hide values from this count,
+     * so anything outside a string that saved JSON never contains is refused.
+     */
+    private static boolean withinLimits(String text) {
+        int depth = 0;
+        int values = 0;
+        boolean inString = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (c == '\\') i++;
+                else if (c == '"') inString = false;
+            } else if (c == '"') inString = true;
+            else if (c == '{' || c == '[') {
+                if (++depth > MAX_DEPTH) return false;
+                values++;
+            } else if (c == '}' || c == ']') depth--;
+            else if (c == ',') values++;
+            else if (c != ':' && !Character.isWhitespace(c) && !isLiteral(c)) return false;
+            if (values > MAX_VALUES) return false;
         }
         return true;
+    }
+
+    private static boolean isLiteral(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '+';
     }
 
     private static int count(int entries) throws Exception {

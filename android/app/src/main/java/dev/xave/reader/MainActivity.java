@@ -19,6 +19,7 @@ import android.os.SystemClock;
 import android.print.PrintManager;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -46,6 +47,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.text.DateFormat;
@@ -101,6 +103,10 @@ public class MainActivity extends Activity {
     private String finding;
     // Saves still downloading, by post key. Static so a link opened again from a new screen or activity waits for its save.
     private static final Set<String> saving = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    // The activity on screen, so a save that outlives the one that started it updates the library you see.
+    private static WeakReference<MainActivity> onScreen = new WeakReference<>(null);
+    // The post whose saved copy this screen already looked up.
+    private String checkedKey;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable poll = this::pollStatus;
     private final Set<File> selected = new HashSet<>();
@@ -111,6 +117,7 @@ public class MainActivity extends Activity {
             && (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         if (dark) setTheme(R.style.AppTheme_Dark);
         super.onCreate(state);
+        onScreen = new WeakReference<>(this);
         zoom = getPreferences(0).getInt("zoom", systemZoom());
         try (InputStream in = getAssets().open("capture.js")) {
             collector = new String(ImageDownloads.readLimited(in, 200000, Long.MAX_VALUE), StandardCharsets.UTF_8);
@@ -301,7 +308,10 @@ public class MainActivity extends Activity {
         url.setTextColor(fg()); url.setHintTextColor(muted()); url.setBackground(null);
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         url.setImeOptions(EditorInfo.IME_ACTION_GO);
-        url.setOnEditorActionListener((v, action, event) -> { open(url.getText().toString()); return true; });
+        url.setOnEditorActionListener((v, action, event) -> {
+            if (event == null || event.getAction() == KeyEvent.ACTION_DOWN) open(url.getText().toString());
+            return true;
+        });
         field.addView(url, new LinearLayout.LayoutParams(0, -2, 1));
         field.addView(pill("Open", true, () -> open(url.getText().toString())));
         filter = "";
@@ -504,7 +514,8 @@ public class MainActivity extends Activity {
 
     /** A link you paste or share opens its saved copy when there is one, so the library keeps each post once. */
     private void open(String input) {
-        String url = input.trim();
+        String link = ReaderDocument.sharedLink(input);
+        String url = link != null ? link : input.trim();
         if (!url.contains("://")) url = "https://" + url;
         String key = ReaderDocument.capturable(url) ? ReaderDocument.postKey(url) : null;
         if (key == null) { openOnline(url); return; }
@@ -515,12 +526,12 @@ public class MainActivity extends Activity {
         // Taking the link ends this screen: its automatic save stops, and a capture finishing during the lookup saves in the background.
         autoSave = null;
         int token = ++generation;
-        String link = url;
+        String target = url;
         io.execute(() -> {
             File saved = findSaved(key);
             runOnUiThread(() -> {
                 if (token != generation || isFinishing()) return;
-                if (saved == null) { openOnline(link); return; }
+                if (saved == null) { openOnline(target); return; }
                 load(saved);
                 Toast.makeText(this, "Already saved. To capture it again, use ⋮ > Open on X.", Toast.LENGTH_LONG).show();
             });
@@ -560,7 +571,7 @@ public class MainActivity extends Activity {
         WebView resumed = sourceBrowser != null && url.equals(sourceUrl) ? sourceBrowser : null;
         if (resumed != null) sourceBrowser = null;
         else destroySource();
-        layout("online"); document = null; currentFile = null; replacing = replaces;
+        layout("online"); document = null; currentFile = null; replacing = replaces; checkedKey = ReaderDocument.postKey(url);
         // A recapture is for loading more of the page first, so only a new link saves without a tap.
         autoSave = replaces == null && !review && !getPreferences(0).getBoolean("review", false) ? new AutoSave(SystemClock.uptimeMillis()) : null;
         ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(screen.getWindowToken(), 0);
@@ -604,6 +615,19 @@ public class MainActivity extends Activity {
                     stopAutoSave(REVIEW_TIP);
                     Toast.makeText(MainActivity.this, "Still saving this post. It appears in your library when it's done.", Toast.LENGTH_LONG).show();
                 }
+                if (autoSave != null && key != null && !key.equals(checkedKey) && !saving.contains(key)) {
+                    checkedKey = key;
+                    int token = generation;
+                    io.execute(() -> {
+                        File saved = findSaved(key);
+                        runOnUiThread(() -> {
+                            if (saved == null || token != generation || autoSave == null || busy) return;
+                            autoSave = null;
+                            openSaved(saved);
+                            Toast.makeText(MainActivity.this, "Already saved. To capture it again, use ⋮ > Open on X.", Toast.LENGTH_LONG).show();
+                        });
+                    });
+                }
                 view.evaluateJavascript(collector, null);
                 CookieManager.getInstance().flush();
                 pollStatus();
@@ -646,7 +670,7 @@ public class MainActivity extends Activity {
                     if (step == AutoSave.Step.THREAD) stopAutoSave("This is a thread. Scroll to load the posts you want, then tap Capture. Replies aren't saved.");
                     else if (step == AutoSave.Step.SAVE) { stopAutoSave(REVIEW_TIP); capture(); }
                 }
-            } catch (Exception ignored) { }
+            } catch (Exception | StackOverflowError ignored) { }
         });
         ui.postDelayed(poll, 1000);
     }
@@ -661,40 +685,50 @@ public class MainActivity extends Activity {
         busy = true;
         int token = generation;
         File replaces = replacing;
+        String page = browser.getUrl();
+        String userAgent = browser.getSettings().getUserAgentString();
         status.setText("Capturing loaded content…");
         // evaluateJavascript returns data only; websites cannot call native app methods.
         browser.evaluateJavascript(collector + "\nwindow.__xaveCollector.capture();", encoded -> {
-            if (token != generation) return;
+            boolean here = token == generation;
+            if (!ReaderDocument.capturedFrom(page, page)) {
+                if (here) { busy = false; error("Xave saves X posts and Articles only. Open an x.com link to capture it."); }
+                return;
+            }
             try {
                 Object decoded = new JSONTokener(encoded).nextValue();
                 JSONObject doc = new JSONObject((String)decoded);
-                if (doc.has("error")) { busy = false; error(doc.getString("error")); return; }
+                if (doc.has("error")) { if (here) { busy = false; error(doc.getString("error")); } return; }
                 doc.put("title", ReaderDocument.savedTitle(doc));
                 doc.put("schemaVersion", 2);
                 doc.put("savedAt", DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date()));
                 JSONArray blocks = doc.getJSONArray("blocks");
                 // Snapshot cookies on the UI thread, only for images on the page's own host. Never export them.
                 String source = doc.optString("source");
+                if (!ReaderDocument.capturedFrom(page, source)) {
+                    if (here) { busy = false; error("The page changed. Reload the page before capturing this link."); }
+                    return;
+                }
                 ArrayList<String> cookies = new ArrayList<>();
                 for (int i=0; i<blocks.length(); i++) {
                     JSONObject b = blocks.getJSONObject(i);
                     cookies.add("image".equals(b.optString("kind")) && ReaderDocument.sameHost(source, b.optString("url"))
                         ? CookieManager.getInstance().getCookie(b.optString("url")) : null);
                 }
-                String userAgent = browser.getSettings().getUserAgentString();
                 if (replaces == null) { save(doc, cookies, userAgent, null, token); return; }
                 io.execute(() -> {
                     JSONObject old;
                     try { old = readSavedDocument(replaces); } catch (Exception e) { old = null; }
                     JSONObject saved = old;
                     runOnUiThread(() -> {
-                        if (token != generation) return;
                         // Tapping through to another post on X and capturing it saves that post alongside, never over, this one.
                         if (saved == null || !Objects.equals(ReaderDocument.postKey(saved.optString("source")), ReaderDocument.postKey(source))) {
                             save(doc, cookies, userAgent, null, token);
                         } else if (ReaderDocument.postCount(doc) >= ReaderDocument.postCount(saved)
                                 && ReaderDocument.imageCount(doc) >= ReaderDocument.imageCount(saved)) {
                             save(doc, cookies, userAgent, replaces, token);
+                        } else if (token != generation) {
+                            save(doc, cookies, userAgent, null, token);
                         } else {
                             new AlertDialog.Builder(this)
                                 .setMessage("Replace your saved copy? It has " + size(saved) + ". This capture has " + size(doc) + ".")
@@ -704,7 +738,7 @@ public class MainActivity extends Activity {
                         }
                     });
                 });
-            } catch (Exception e) { busy = false; error("Could not capture this page. Wait for it to load, then retry."); }
+            } catch (Exception | StackOverflowError e) { if (here) { busy = false; error("Could not capture this page. Wait for it to load, then retry."); } }
         });
     }
 
@@ -716,38 +750,51 @@ public class MainActivity extends Activity {
 
     /** Downloads the images and writes the capture. It finishes even if you leave the screen, so no save is lost silently. */
     private void save(JSONObject doc, List<String> cookies, String userAgent, File replaces, int token) {
-        if (token != generation) return;
-        status.setText("Downloading images for offline reading…");
+        if (token == generation) status.setText("Downloading images for offline reading…");
         Context app = getApplicationContext();
         String key = ReaderDocument.postKey(doc.optString("source"));
         if (key != null) saving.add(key);
         captures.execute(() -> {
             try {
                 File file = new File(library(), UUID.randomUUID() + ".json");
-                ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file),
-                    (finished, count) -> runOnUiThread(() -> {
-                        if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
-                    }));
+                // The text is written first so Android closing Xave mid-download keeps it.
                 try {
                     writeAtomic(file, doc.toString());
                     try { writeSummary(file, doc); } catch (Exception ignored) { }
-                    if (replaces != null) {
-                        try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
-                        getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
-                    }
-                    runOnUiThread(() -> {
-                        if (token == generation && !isFinishing()) { showReader(doc, file, true); return; }
-                        // You left the capture screen, so confirm the save wherever you are now.
-                        Toast.makeText(app, ReaderDocument.savedMessage(doc), Toast.LENGTH_SHORT).show();
-                        if ("library".equals(mode) && !isDestroyed()) fillLibrary();
-                    });
                 } catch (Exception e) {
                     try { DocumentFiles.delete(file); } catch (Exception ignored) { }
                     runOnUiThread(() -> {
                         if (token == generation) { busy = false; error("Could not save this capture. Check available storage and retry."); }
                         else Toast.makeText(app, "Could not save a capture. Check available storage and retry.", Toast.LENGTH_LONG).show();
                     });
+                    return;
                 }
+                ImageDownloads.save(doc, cookies, userAgent, DocumentFiles.images(file),
+                    (finished, count) -> runOnUiThread(() -> {
+                        if (token == generation) status.setText("Downloading images for offline reading · " + finished + "/" + count);
+                    }));
+                // Deleted while its images downloaded; rewriting it would bring it back.
+                if (!file.exists()) return;
+                try {
+                    writeAtomic(file, doc.toString());
+                } catch (Exception e) {
+                    runOnUiThread(() -> {
+                        if (token == generation) { busy = false; error("Saved without images. Check available storage and retry."); }
+                        else Toast.makeText(app, "Saved without images. Check available storage and retry.", Toast.LENGTH_LONG).show();
+                    });
+                    return;
+                }
+                if (replaces != null) {
+                    try { DocumentFiles.delete(replaces); } catch (Exception ignored) { }
+                    getPreferences(0).edit().remove("position:" + replaces.getName()).apply();
+                }
+                runOnUiThread(() -> {
+                    if (token == generation && !isFinishing()) { showReader(doc, file, true); return; }
+                    // You left the capture screen, so confirm the save wherever you are now.
+                    Toast.makeText(app, ReaderDocument.savedMessage(doc), Toast.LENGTH_SHORT).show();
+                    MainActivity now = onScreen.get();
+                    if (now != null && "library".equals(now.mode) && !now.isDestroyed()) now.fillLibrary();
+                });
             } finally {
                 if (key != null) saving.remove(key);
             }
@@ -1087,7 +1134,8 @@ public class MainActivity extends Activity {
                     String items = count + (count == 1 ? " item" : " items");
                     runOnUiThread(() -> {
                         Toast.makeText(this, (request == 2 ? "Backed up " : "Restored ") + items, Toast.LENGTH_SHORT).show();
-                        if (request == 3 && "library".equals(mode) && !isDestroyed()) fillLibrary();
+                        MainActivity now = onScreen.get();
+                        if (request == 3 && now != null && "library".equals(now.mode) && !now.isDestroyed()) now.fillLibrary();
                     });
                 } catch (Exception e) {
                     runOnUiThread(() -> error(request == 2 ? "Could not save the backup. Check available storage and retry."

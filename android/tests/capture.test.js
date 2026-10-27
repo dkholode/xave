@@ -1,6 +1,10 @@
 /* Browser-based regression tests using the actual capture script and DOM fixtures. */
 const results = [];
 function assert(condition, message) { if (!condition) throw new Error(message); }
+function assertRuns(runs, expected) {
+  const same = runs.length === expected.length && expected.every((run, i) => runs[i].text === run.text && runs[i].url === run.url && Object.keys(runs[i]).every(key => key === 'text' || key === 'url'));
+  assert(same, 'Wrong runs: ' + JSON.stringify(runs));
+}
 function fixture(html, url = 'https://example.org/post') {
   const frame = document.createElement('iframe');
   document.body.append(frame);
@@ -90,6 +94,15 @@ test('X accumulates virtualized posts and replaces expanded text without duplica
   assert(doc.title === '@alice · 2 posts', 'Lost virtualized root or duplicated post');
   assert(doc.blocks.some(b => b.text === 'Expanded full post'), 'Expansion was not retained'); f.close();
 });
+test('A collapsed re-render never replaces an expanded post', () => {
+  const f = fixture(post('alice', root, 'All of the already expanded content'), `https://x.com/alice/status/${root}`);
+  f.summary();
+  f.doc.querySelector('[data-testid="tweetText"]').textContent = 'All of…';
+  f.summary();
+  const texts = f.capture().blocks.filter(b => b.kind === 'text').map(b => b.text);
+  assert(texts.includes('All of the already expanded content'), 'Collapsed re-render replaced the expanded post');
+  assert(!texts.includes('All of…'), 'Kept the collapsed text'); f.close();
+});
 test('Navigating to another post resets the collector', () => {
   const f = fixture(post('alice', root, 'First thread'), `https://x.com/alice/status/${root}`);
   f.location.href = `https://x.com/bob/status/${reply}`;
@@ -154,32 +167,51 @@ test('A quoted post placeholder links to the quoted post', () => {
   assert(placeholder && placeholder.url === 'https://x.com/bob/status/30000000000000000003', 'Placeholder is not linked: ' + JSON.stringify(placeholder));
   assert(!doc.blocks.some(b => b.text.includes('Quoted words')), 'Captured quoted text'); f.close();
 });
+test('Embedded posts inside an X Article become a linked note', () => {
+  const f = xArticle('Embedded post', `<p>${paragraph}</p><article data-testid="tweet"><a href="/bob/status/30000000000000000003"><time datetime="2026-10-19">Yesterday</time></a><div data-testid="tweetText">BOB_EMBEDDED_POST</div></article>`);
+  const doc = f.capture();
+  assert(!doc.blocks.some(b => b.text.includes('BOB_EMBEDDED_POST')), 'Captured the embedded post text');
+  const note = doc.blocks.find(b => b.text === '[Quoted post — see original]');
+  assert(note && note.url === 'https://x.com/bob/status/30000000000000000003', 'Embedded post is not linked: ' + JSON.stringify(note)); f.close();
+});
 test('Links inside a post keep their destinations', () => {
   const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">See <a href="https://t.co/abc">example.com/research…</a> for <a href="/hashtag/x">#x</a> details</div></article>`, `https://x.com/alice/status/${root}`);
   const block = f.capture().blocks.find(b => b.kind === 'text' && b.text.startsWith('See'));
-  assert(JSON.stringify(block.runs) === '[{"text":"See "},{"text":"example.com/research…","url":"https://t.co/abc"},{"text":" for "},{"text":"#x","url":"https://x.com/hashtag/x"},{"text":" details"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+  assertRuns(block.runs, [{text: 'See '}, {text: 'example.com/research…', url: 'https://t.co/abc'}, {text: ' for '}, {text: '#x', url: 'https://x.com/hashtag/x'}, {text: ' details'}]); f.close();
   const plain = fixture(post('alice', root, 'Plain'), `https://x.com/alice/status/${root}`);
   assert(!('runs' in plain.capture().blocks.find(b => b.text === 'Plain')), 'Plain post gained runs'); plain.close();
+});
+test('Emoji images in a post keep their alt text in its text', () => {
+  const emoji = '<img alt="❤️" src="https://abs-0.twimg.com/emoji/v2/svg/2764.svg">';
+  const f = fixture(post('alice', root, `I ${emoji} this`), `https://x.com/alice/status/${root}`);
+  const block = f.capture().blocks.find(b => b.kind === 'text');
+  assert(block && block.text === 'I ❤️ this', 'Lost the emoji: ' + JSON.stringify(block)); f.close();
+});
+test('A post whose only content is an emoji image is still captured', () => {
+  const emoji = '<img alt="❤️" src="https://abs-0.twimg.com/emoji/v2/svg/2764.svg">';
+  const f = fixture(post('alice', root, emoji), `https://x.com/alice/status/${root}`);
+  const doc = f.capture();
+  assert(doc.blocks && doc.blocks.some(b => b.kind === 'text' && b.text === '❤️'), 'Dropped an emoji-only post: ' + JSON.stringify(doc)); f.close();
 });
 test('Line breaks in a post with a link survive', () => {
   const f = fixture(`<article data-testid="tweet"><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText" style="white-space:pre-wrap">First line\n\nRead <a href="https://t.co/abc">this</a></div></article>`, `https://x.com/alice/status/${root}`);
   const block = f.capture().blocks.find(b => b.kind === 'text');
-  assert(JSON.stringify(block.runs) === '[{"text":"First line\\n\\nRead "},{"text":"this","url":"https://t.co/abc"}]', 'Lost line breaks: ' + JSON.stringify(block.runs)); f.close();
+  assertRuns(block.runs, [{text: 'First line\n\nRead '}, {text: 'this', url: 'https://t.co/abc'}]); f.close();
 });
 test('A block inside a post with a link starts a new line, and plain text stays one run', () => {
   const f = fixture(`<article data-testid="tweet"><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText"><span>Line one</span><div><span>Line </span><span>two </span><a href="https://t.co/abc">a.co</a></div></div></article>`, `https://x.com/alice/status/${root}`);
   const block = f.capture().blocks.find(b => b.kind === 'text');
-  assert(JSON.stringify(block.runs) === '[{"text":"Line one\\nLine two "},{"text":"a.co","url":"https://t.co/abc"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+  assertRuns(block.runs, [{text: 'Line one\nLine two '}, {text: 'a.co', url: 'https://t.co/abc'}]); f.close();
 });
 test('Text after a block inside a linked post starts its own line', () => {
   const f = fixture(`<article data-testid="tweet"><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Before<div>Middle</div>After <a href="https://t.co/a">link</a></div></article>`, `https://x.com/alice/status/${root}`);
   const block = f.capture().blocks.find(b => b.kind === 'text');
-  assert(JSON.stringify(block.runs) === '[{"text":"Before\\nMiddle\\nAfter "},{"text":"link","url":"https://t.co/a"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+  assertRuns(block.runs, [{text: 'Before\nMiddle\nAfter '}, {text: 'link', url: 'https://t.co/a'}]); f.close();
 });
 test('Unsafe links inside a post stay plain text', () => {
   const f = fixture(`<article data-testid="tweet"><div data-testid="User-Name">alice</div><a href="https://x.com/alice/status/${root}"><time datetime="2026-10-20">Today</time></a><div data-testid="tweetText">Try <a href="https://t.co/abc">this</a> or <a href="javascript:alert(1)">that</a></div></article>`, `https://x.com/alice/status/${root}`);
   const block = f.capture().blocks.find(b => b.kind === 'text' && b.text.startsWith('Try'));
-  assert(JSON.stringify(block.runs) === '[{"text":"Try "},{"text":"this","url":"https://t.co/abc"},{"text":" or that"}]', 'Wrong runs: ' + JSON.stringify(block.runs)); f.close();
+  assertRuns(block.runs, [{text: 'Try '}, {text: 'this', url: 'https://t.co/abc'}, {text: ' or that'}]); f.close();
 });
 test('Anonymous X articles preserve the public post and photo without test IDs', () => {
   const f = fixture(`<main><article><div dir="auto" class="whitespace-pre-wrap">Public post text</div><a href="/alice/status/${root}/photo/1"><img src="https://pbs.twimg.com/media/photo.webp"></a><a href="https://m.x.com/alice/status/${root}?launch_app_store=true&ct=engagement_view_post">Today</a><div data-engagement-action="like">123 likes</div></article></main>`, `https://x.com/alice/status/${root}`);
@@ -199,6 +231,7 @@ test('Anonymous X status pages capture an inline X Article instead of its empty 
   assert(f.summary().article === true, 'Did not recognize the inline X Article');
   const doc = f.capture();
   assert(doc.title === 'What is a harness?', 'Wrong title: ' + doc.title);
+  assert(doc.blocks.find(b => b.kind === 'image')?.url === 'https://pbs.twimg.com/media/cover.jpg', 'Lost the Article cover');
   assert(doc.blocks.some(b => b.kind === 'heading' && b.text === 'Humans use interfaces'), 'Lost the article heading');
   assert(doc.blocks.some(b => b.kind === 'listItem' && b.text === 'First point'), 'Lost the article list');
   assert(!/6 min read|4\.1K|\.x\{\}/.test(JSON.stringify(doc.blocks)), 'Captured page chrome'); f.close();
@@ -233,6 +266,22 @@ test('Numbered and nested lists, heading levels, quotes, and code indentation su
   assert(blocks.some(b => b.kind === 'listItem' && b.depth === 2 && b.text === 'Nested point'), 'Lost nested list');
   assert(blocks.some(b => b.kind === 'quote' && b.text === 'A useful quote.'), 'Lost quote');
   assert(blocks.some(b => b.kind === 'code' && b.text.startsWith('  indented')), 'Trimmed code indentation'); f.close();
+});
+test('Emoji images inside an X Article paragraph do not split it', () => {
+  const f = xArticle('Emoji article', `<p>${paragraph}I <img alt="❤️" src="https://abs-0.twimg.com/emoji/v2/svg/2764.svg"> this.</p>`);
+  const blocks = f.capture().blocks.filter(b => b.text.endsWith('I ❤️ this.'));
+  assert(blocks.length === 1, 'Split the paragraph around an emoji: ' + JSON.stringify(blocks)); f.close();
+});
+test('A list item with several paragraphs stays one item', () => {
+  const f = xArticle('List paragraphs', `<p>${paragraph}</p><ol start="3"><li><p>Intro</p><p>Continuation</p></li><li>Next</li></ol>`);
+  const items = f.capture().blocks.filter(b => b.kind === 'listItem');
+  assert(items.length === 2 && items[0].marker === '3.' && items[1].marker === '4.', 'Wrong list items: ' + JSON.stringify(items));
+  assert(items[0].text === 'Intro\n\nContinuation', 'Split one list item: ' + JSON.stringify(items[0].text)); f.close();
+});
+test('Inline code keeps its spaces', () => {
+  const f = xArticle('Inline code', `<p>${paragraph}Set <code>x  =  1</code> first.</p>`);
+  const runs = f.capture().blocks.flatMap(b => b.runs || []);
+  assert(runs.some(r => r.code && r.text === 'x  =  1'), 'Collapsed spaces in inline code: ' + JSON.stringify(runs)); f.close();
 });
 test('Article title is emitted once rather than repeated as a body heading', () => {
   const f = xArticle('Unique title', `<h1>Unique title</h1><p>${paragraph}</p><h2>Another heading</h2>`);
