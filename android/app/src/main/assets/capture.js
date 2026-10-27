@@ -22,6 +22,7 @@
     && getComputedStyle(el).visibility !== 'hidden';
   const image = el => ({kind: 'image', url: el.currentSrc || el.src,
     text: el.alt || 'Image'});
+  const emoji = el => (el.currentSrc || el.src || '').includes('/emoji/') && !!el.alt;
   // Only web links without credentials stay links; javascript: and user:pass@ links fall back to plain text.
   const safeLink = href => {
     try {
@@ -40,7 +41,8 @@
     };
     const walk = node => {
       if (node.nodeType === Node.TEXT_NODE) { add(node.textContent.replace(/\u00a0/g, ' ')); return; }
-      if (node.nodeType !== Node.ELEMENT_NODE || !visible(node) || node.tagName === 'IMG') return;
+      if (node.nodeType !== Node.ELEMENT_NODE || !visible(node)) return;
+      if (node.tagName === 'IMG') { if (emoji(node)) add(node.alt); return; }
       if (node.tagName === 'BR') { add('\n'); return; }
       // innerText breaks the line around each block box, and `text` comes from innerText, so runs match it.
       const block = /^(block|list-item)$/.test(getComputedStyle(node).display);
@@ -74,6 +76,15 @@
     return match ? {card, own, time, timestamp, match} : null;
   }
 
+  // Only the quote's timestamp link names it. Links in its text can point anywhere, so without one the note stays unlinked.
+  function quotePlaceholder(quote) {
+    const quoted = quote.querySelector('time')?.closest('a');
+    const quotedMatch = quoted && new URL(quoted.getAttribute('href'), source).href.match(/\/([^/]+)\/status\/(\d+)/);
+    const placeholder = {kind:'text', text:'[Quoted post — see original]'};
+    if (quotedMatch) placeholder.url = 'https://x.com/' + quotedMatch[1] + '/status/' + quotedMatch[2];
+    return placeholder;
+  }
+
   function scan() {
     if (!isX || !status || pageKey(location.href) !== key) return;
     const found = [...document.querySelectorAll('article')].map(identify).filter(Boolean);
@@ -84,13 +95,18 @@
       if (!author || match[1].toLowerCase() !== author) return;
       const text = own('[data-testid="tweetText"], [dir="auto"].whitespace-pre-wrap')[0];
       const blocks = [];
+      let body = null;
       // Empty text doesn't count, so a post X renders without readable content is refused instead of saved blank.
-      if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]') && clean(text.innerText)) {
+      if (text && visible(text) && !text.closest('[data-testid="quoteTweet"]')) {
         const runs = textRuns(text);
-        // Only posts with a real link carry runs, so every other post keeps the plain text block.
-        const block = {kind: 'text', text: clean(text.innerText)};
-        if (runs.some(run => run.url)) block.runs = runs;
-        blocks.push(block);
+        // innerText drops emoji alt text, so a post with emoji images takes its text from the runs.
+        const words = [...text.querySelectorAll('img')].some(emoji) ? clean(runs.map(run => run.text).join('')) : clean(text.innerText);
+        if (words) {
+          // Only posts with a real link carry runs, so every other post keeps the plain text block.
+          body = {kind: 'text', text: words};
+          if (runs.some(run => run.url)) body.runs = runs;
+          blocks.push(body);
+        }
       }
       // Photo containers inside quoted posts are deliberately excluded.
       own('[data-testid="tweetPhoto"] img, a[href*="/status/' + match[2] + '/photo/"] img').forEach(img => {
@@ -98,18 +114,18 @@
       });
       if (own('video').length) blocks.push({kind:'text', text:'[Video not saved offline — see original post]'});
       const quote = card.querySelector('[data-testid="quoteTweet"], article');
-      if (quote) {
-        // Only the quote's timestamp link names it. Links in its text can point anywhere, so without one the note stays unlinked.
-        const quoted = quote.querySelector('time')?.closest('a');
-        const quotedMatch = quoted && new URL(quoted.getAttribute('href'), source).href.match(/\/([^/]+)\/status\/(\d+)/);
-        const placeholder = {kind:'text', text:'[Quoted post — see original]'};
-        if (quotedMatch) placeholder.url = 'https://x.com/' + quotedMatch[1] + '/status/' + quotedMatch[2];
-        blocks.push(placeholder);
-      }
+      if (quote) blocks.push(quotePlaceholder(quote));
       if (!blocks.length) return;
       blocks.push({kind: 'link', text: time?.dateTime || clean(timestamp.innerText) || 'Original post',
         url: 'https://x.com/' + match[1] + '/status/' + match[2]});
-      posts.set(match[2], {id: match[2], blocks});
+      // X re-renders a post scrolled out of view collapsed behind "Show more", so the longer text already captured
+      // takes the place of the newer render's.
+      const kept = posts.get(match[2])?.body;
+      if (kept && (!body || body.text.length < kept.text.length)) {
+        if (body) blocks[0] = kept; else blocks.unshift(kept);
+        body = kept;
+      }
+      posts.set(match[2], {id: match[2], blocks, body});
     });
   }
 
@@ -123,6 +139,7 @@
     const blocks = [];
     const excluded = 'nav,footer,aside,script,style,noscript,form,button,[role="navigation"],[hidden],[aria-hidden="true"]';
     let pending = [], pendingContext = {}, skippedTitle = false;
+    let lastListBlock = null, lastListContext = null;
     function flush() {
       while (pending.length && !pending[0].text.trim()) pending.shift();
       while (pending.length && !pending[pending.length-1].text.trim()) pending.pop();
@@ -130,7 +147,13 @@
         pending[0].text = pending[0].text.trimStart();
         pending[pending.length-1].text = pending[pending.length-1].text.trimEnd();
         const text = pending.map(r => r.text).join('');
-        if (text) blocks.push({...pendingContext, text, runs: pending});
+        if (text && pendingContext === lastListContext && blocks[blocks.length-1] === lastListBlock) {
+          lastListBlock.text += '\n\n' + text;
+          lastListBlock.runs.push({text: '\n\n'}, ...pending);
+        } else if (text) {
+          blocks.push({...pendingContext, text, runs: pending});
+          if (pendingContext.kind === 'listItem') { lastListBlock = blocks[blocks.length-1]; lastListContext = pendingContext; }
+        }
       }
       pending = [];
     }
@@ -143,15 +166,17 @@
     }
     function walk(node, context = {kind:'text'}, marks = {}) {
       if (node.nodeType === Node.TEXT_NODE) {
-        append(node.textContent.replace(/\s+/g, ' '), marks, context);
+        append(marks.code ? node.textContent : node.textContent.replace(/\s+/g, ' '), marks, context);
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE || node.matches(excluded) || !visible(node)) return;
       if (xArticle && (node.matches('[data-testid="twitter-article-title"]')
           || node.getAttribute('role') === 'group' && !xBody?.contains(node))) return;
+      if (node !== root && !node.contains(xBody) && node.matches('article, [data-testid="tweet"], [data-testid="quoteTweet"]')) { flush(); blocks.push(quotePlaceholder(node)); return; }
       const tag = node.tagName;
       if (/^H[1-6]$/.test(tag) && !skippedTitle && clean(node.innerText) === title) { skippedTitle = true; return; }
       if (tag === 'IMG') {
+        if (emoji(node)) { append(node.alt, marks, context); return; }
         // naturalWidth stays 0 until a lazy image loads, so an unloaded one is judged by its layout width instead.
         flush(); if (node.naturalWidth >= 120 || node.naturalWidth === 0 && node.getBoundingClientRect().width >= 120) blocks.push(image(node)); return;
       }
@@ -193,6 +218,10 @@
       } catch (_) { }
       node.childNodes.forEach(child => walk(child, next, style));
       if (boundary) flush();
+    }
+    if (!xArticle) {
+      const cover = document.querySelector('[data-article-part="cover"] img');
+      if (cover && !root.contains(cover)) blocks.push(image(cover));
     }
     walk(root); flush();
     return {title, blocks};

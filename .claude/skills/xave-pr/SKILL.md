@@ -19,10 +19,16 @@ Done when each shot has a screen name (`library`, `reader-menu`, `capture`) and 
 
 Use the connected Android device or emulator in portrait, and take every shot of one PR on that same device. If `adb devices` lists more than one, ask which to use and pass `-s <serial>` to each `adb` command. Write every device `rm` with literal paths.
 
-1. Back up app data: `adb exec-out run-as dev.xave.reader tar cf - files shared_prefs app_webview > /tmp/xave-<slug>/device-backup.tar`
+1. Back up app data, by the path the installed build allows:
+   - `adb shell run-as dev.xave.reader true` succeeds (a debug build): `adb exec-out run-as dev.xave.reader tar cf - files shared_prefs app_webview > /tmp/xave-<slug>/device-backup.tar`. Verified when `tar tf` on it lists `files/library/`.
+   - It fails (a release build, which also can't be replaced by a debug build without uninstalling): on the device, **⋮ > Back up library**, then `adb pull` the zip to `/tmp/xave-<slug>/`. Verified when `unzip -l` on it lists `backup-complete`.
+
+   Every install, uninstall, and `pm clear` below waits until the backup is verified.
 2. Load the same fixtures on both builds: synthetic `demo_*` accounts, plus a real public post when the change touches capture (`https://x.com/jack/status/20`).
 3. Install a `main` build and take every before shot. Install the branch build and take every after shot: `adb exec-out screencap -p > /tmp/xave-<slug>/shots/<name>-before.png` (or `-after.png`).
-4. Restore: `adb shell pm clear dev.xave.reader`, then `adb exec-in run-as dev.xave.reader tar xf - < /tmp/xave-<slug>/device-backup.tar`. Reinstall the build that was on the device before step 1.
+4. Restore by the same path as step 1:
+   - Tar: `adb shell pm clear dev.xave.reader`, then `adb exec-in run-as dev.xave.reader tar xf - < /tmp/xave-<slug>/device-backup.tar`. Reinstall the build that was on the device before step 1.
+   - Zip: reinstall the build that was on the device before step 1, then **⋮ > Restore a backup** with the pulled zip.
 
 Done when every shot from step 1 exists and the device has its own library back.
 

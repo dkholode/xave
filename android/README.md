@@ -9,8 +9,9 @@ to use it, see the [main README](../README.md).
 2. In SDK Manager, install Android SDK Platform 35 and accept the SDK licenses.
 3. Let Gradle sync, then select your device and click Run.
 
-For a command-line build, set `JAVA_HOME` to a JDK 17 or later and
-`ANDROID_HOME` to your Android SDK folder, then run from this directory:
+For a command-line build, set `JAVA_HOME` to a JDK from 17 through 23 (this
+Gradle version doesn't run on newer ones) and `ANDROID_HOME` to your Android SDK
+folder, then run from this directory:
 
 ```bash
 ./gradlew assembleDebug
